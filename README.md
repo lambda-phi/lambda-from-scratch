@@ -1,4 +1,4 @@
-# λVM -- Lambda Virtual Machine
+# λφ -- Lambda Phi
 
 ## Before you begin
 
