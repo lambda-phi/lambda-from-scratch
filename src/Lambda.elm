@@ -1,4 +1,4 @@
-module Lambda exposing (Context, Error(..), Expression(..), Type(..), isFreeType, lowercaseName, map, newContext, toBase, withType, withVariable)
+module Lambda exposing (Context, Error(..), Expression(..), Type(..), isFreeType, map, newContext, newType, toBase, withType, withVariable)
 
 import Char
 import Dict exposing (Dict)
@@ -28,7 +28,7 @@ type Error
 
 type alias Context =
     { variables : Dict String Type
-    , types : DisjointSet String
+    , types : DisjointSet Type
     }
 
 
@@ -48,7 +48,7 @@ withVariable name typ ctx =
 
 withType : String -> Context -> Context
 withType name ctx =
-    { ctx | types = DisjointSet.union name name ctx.types }
+    { ctx | types = DisjointSet.union (Type name) (Type name) ctx.types }
 
 
 {-|
@@ -83,17 +83,17 @@ toBase base num =
 
     import Dict
 
-    lowercaseName 1 [] --> "a"
-    lowercaseName 26 [] --> "z"
-    lowercaseName 27 [] --> "aa"
-    lowercaseName 28 [] --> "ab"
+    newType 1 [] --> Type "a"
+    newType 26 [] --> Type "z"
+    newType 27 [] --> Type "aa"
+    newType 28 [] --> Type "ab"
 
-    lowercaseName 1 [ "a" ] --> "b"
-    lowercaseName 1 [ "a", "b" ] --> "c"
+    newType 1 [ Type "a" ] --> Type "b"
+    newType 1 [ Type "a", Type "b" ] --> Type "c"
 
 -}
-lowercaseName : Int -> List String -> String
-lowercaseName seed existingNames =
+newType : Int -> List Type -> Type
+newType seed existing =
     let
         name =
             (case seed |> toBase (Char.toCode 'z' - Char.toCode 'a' + 2) of
@@ -107,11 +107,11 @@ lowercaseName seed existingNames =
                 |> List.map Char.fromCode
                 |> String.fromList
     in
-    if List.any ((==) name) existingNames then
-        lowercaseName (seed + 1) existingNames
+    if List.any ((==) (Type name)) existing then
+        newType (seed + 1) existing
 
     else
-        name
+        Type name
 
 
 {-|
@@ -143,15 +143,16 @@ lowercaseName seed existingNames =
     typeOf (App (Var "x") (Int 42)) --> Err (InvalidApply (Var "x") (Type "Integer"))
     typeOf (App (Var "f") (Int 42)) --> Ok (Type "Number")
     typeOf (App (Var "f") (Num 3.14)) --> Err (TypeMismatch (Type "Integer") (Type "Number"))
+    typeOf (App (Var "f") (Abs "x" (Int 42))) --> Err (TypeMismatch (Type "Integer") (TypeAbs (Type "a") (Type "Integer")))
     typeOf (App (Var "g") (Int 42)) --> Ok (Type "Integer")
     typeOf (App (Var "g") (Num 3.14)) --> Ok (Type "Number")
+    typeOf (App (Var "g") (Abs "x" (Int 42))) --> Ok (TypeAbs (Type "a") (Type "Integer"))
 
     typeOf (App (Abs "x" (Int 42)) (Num 3.14)) --> Ok (Type "Integer")
     typeOf (App (Abs "x" (Num 3.14)) (Int 42)) --> Ok (Type "Number")
     typeOf (App (Abs "x" (Var "x")) (Int 42)) --> Ok (Type "Integer")
     typeOf (App (Abs "x" (Var "x")) (Num 3.14)) --> Ok (Type "Number")
-
-    typeOf (App (Abs "x" (Var "x")) (Abs "x" (Int 42))) -- Ok (TypeAbs (Type "a") (Type "Integer"))
+    typeOf (App (Abs "x" (Var "x")) (Abs "x" (Int 42))) --> Ok (TypeAbs (Type "a") (Type "Integer"))
 
 -}
 map : (Expression -> Type -> state -> ( a, state )) -> Expression -> state -> Context -> Result Error ( a, state )
@@ -173,41 +174,32 @@ inferTypes f expr ctx =
                 |> Result.fromMaybe (VariableNotFound x)
                 |> Result.andThen (\t -> f expr (finalType t ctx) ctx)
 
-        Abs x y ->
+        Abs x outE ->
             let
-                newType =
-                    lowercaseName 1 (DisjointSet.toList ctx.types |> List.map Tuple.first)
+                xT =
+                    newType 1 (DisjointSet.toList ctx.types |> List.map Tuple.first)
             in
             ctx
-                |> withVariable x (Type newType)
-                |> inferTypes (\_ t -> f expr (TypeAbs (Type newType) (finalType t ctx))) y
+                |> withVariable x xT
+                |> inferTypes (\_ outT -> f expr (TypeAbs xT (finalType outT ctx))) outE
 
         App absE argE ->
-            let
-                typecheckApply : ( Type, Type ) -> Type -> Context -> Result Error a
-                typecheckApply ( inT, outT ) argT c =
-                    if inT == argT then
-                        f expr (finalType outT c) c
-
-                    else
-                        Err (TypeMismatch inT argT)
-            in
             andThen2
                 (\( _, absT ) ( _, argT ) c ->
-                    case ( absT, argT ) of
-                        ( TypeAbs (Type inTName) outT, Type argTName ) ->
-                            if isFreeType inTName c then
+                    case absT of
+                        TypeAbs inT outT ->
+                            if isFreeType inT c then
                                 let
                                     newCtx =
-                                        unify argTName inTName c
+                                        unify argT inT c
                                 in
                                 f expr (finalType outT newCtx) newCtx
 
-                            else
-                                typecheckApply ( Type inTName, outT ) argT c
+                            else if inT == argT then
+                                f expr (finalType outT c) c
 
-                        ( TypeAbs inT outT, _ ) ->
-                            typecheckApply ( inT, outT ) argT c
+                            else
+                                Err (TypeMismatch inT argT)
 
                         _ ->
                             Err (InvalidApply absE absT)
@@ -217,7 +209,7 @@ inferTypes f expr ctx =
                 ctx
 
 
-unify : String -> String -> Context -> Context
+unify : Type -> Type -> Context -> Context
 unify t1 t2 ctx =
     { ctx | types = DisjointSet.union t1 t2 ctx.types }
 
@@ -225,8 +217,8 @@ unify t1 t2 ctx =
 finalType : Type -> Context -> Type
 finalType typ ctx =
     case typ of
-        Type t ->
-            Type (DisjointSet.find t ctx.types |> Maybe.withDefault t)
+        Type _ ->
+            DisjointSet.find typ ctx.types |> Maybe.withDefault typ
 
         TypeAbs t1 t2 ->
             TypeAbs (finalType t1 ctx) (finalType t2 ctx)
@@ -242,12 +234,12 @@ andThen2 f expr1 expr2 ctx =
 
 {-|
 
-    isFreeType "Integer" newContext --> False
+    isFreeType (Type "Integer") newContext --> False
 
-    isFreeType "a" newContext --> True
+    isFreeType (Type "a") newContext --> True
 
 -}
-isFreeType : String -> Context -> Bool
+isFreeType : Type -> Context -> Bool
 isFreeType typ ctx =
     case DisjointSet.find typ ctx.types of
         Just _ ->
