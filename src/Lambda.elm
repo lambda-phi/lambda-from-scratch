@@ -3,7 +3,6 @@ module Lambda exposing (Context, Error(..), Expression(..), Type(..), isFreeType
 import Char
 import Dict exposing (Dict)
 import DisjointSet exposing (DisjointSet)
-import Set exposing (Set)
 
 
 {-| [Hindley-Milner lambda calculus](https://en.wikipedia.org/wiki/Simply_typed_lambda_calculus#Alternative_syntaxes)
@@ -84,16 +83,16 @@ toBase base num =
 
     import Dict
 
-    lowercaseName 1 Dict.empty --> "a"
-    lowercaseName 26 Dict.empty --> "z"
-    lowercaseName 27 Dict.empty -- "aa"
-    lowercaseName 28 Dict.empty -- "ab"
+    lowercaseName 1 [] --> "a"
+    lowercaseName 26 [] --> "z"
+    lowercaseName 27 [] --> "aa"
+    lowercaseName 28 [] --> "ab"
 
-    lowercaseName 1 (Dict.fromList [ ("a", 0) ]) --> "b"
-    lowercaseName 1 (Dict.fromList [ ("a", 0), ("b", 0) ]) --> "c"
+    lowercaseName 1 [ "a" ] --> "b"
+    lowercaseName 1 [ "a", "b" ] --> "c"
 
 -}
-lowercaseName : Int -> Dict String a -> String
+lowercaseName : Int -> List String -> String
 lowercaseName seed existingNames =
     let
         name =
@@ -108,7 +107,7 @@ lowercaseName seed existingNames =
                 |> List.map Char.fromCode
                 |> String.fromList
     in
-    if Dict.member name existingNames then
+    if List.any ((==) name) existingNames then
         lowercaseName (seed + 1) existingNames
 
     else
@@ -177,7 +176,7 @@ inferTypes f expr ctx =
         Abs x y ->
             let
                 newType =
-                    lowercaseName 1 (DisjointSet.toDict ctx.types)
+                    lowercaseName 1 (DisjointSet.toList ctx.types |> List.map Tuple.first)
             in
             ctx
                 |> withVariable x (Type newType)
@@ -250,4 +249,9 @@ andThen2 f expr1 expr2 ctx =
 -}
 isFreeType : String -> Context -> Bool
 isFreeType typ ctx =
-    not (Dict.member typ (DisjointSet.toDict ctx.types))
+    case DisjointSet.find typ ctx.types of
+        Just _ ->
+            False
+
+        Nothing ->
+            True
