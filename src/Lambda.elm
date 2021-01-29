@@ -1,4 +1,4 @@
-module Lambda exposing (Context, Error(..), Expression(..), Type(..), isFreeType, map, newContext, newType, toBase, withType, withVariable)
+module Lambda exposing (Context, Error(..), Expression(..), Type(..), isFreeType, map, newContext, newType, toBase, typeOf, withType, withVariable)
 
 import Char
 import Dict exposing (Dict)
@@ -48,6 +48,7 @@ withVariable name typ ctx =
 
 withType : String -> Context -> Context
 withType name ctx =
+    -- TODO(DisjointSet): add an `add` function
     { ctx | types = DisjointSet.union (Type name) (Type name) ctx.types }
 
 
@@ -116,8 +117,6 @@ newType seed existing =
 
 {-|
 
-    import Dict
-
     ctx : Context
     ctx =
         newContext
@@ -125,36 +124,38 @@ newType seed existing =
             |> withVariable "f" (TypeAbs (Type "Integer") (Type "Number"))
             |> withVariable "g" (TypeAbs (Type "a") (Type "a"))
 
-    typeOf : Expression -> Result Error Type
-    typeOf expr =
-        map (\x t s -> (t, s)) expr Nothing ctx
-            |> Result.map Tuple.first
+    typeOf (Int 42) ctx --> Ok (Type "Integer")
+    typeOf (Num 3.14) ctx --> Ok (Type "Number")
 
-    typeOf (Int 42) --> Ok (Type "Integer")
-    typeOf (Num 3.14) --> Ok (Type "Number")
+    typeOf (Var "x") ctx --> Ok (Type "Integer")
+    typeOf (Var "y") ctx --> Err (VariableNotFound "y")
 
-    typeOf (Var "x") --> Ok (Type "Integer")
-    typeOf (Var "y") --> Err (VariableNotFound "y")
+    typeOf (Abs "x" (Int 42)) ctx --> Ok (TypeAbs (Type "a") (Type "Integer"))
+    typeOf (Abs "x" (Var "x")) ctx --> Ok (TypeAbs (Type "a") (Type "a"))
+    typeOf (Abs "x" (Var "y")) ctx --> Err (VariableNotFound "y")
 
-    typeOf (Abs "x" (Int 42)) --> Ok (TypeAbs (Type "a") (Type "Integer"))
-    typeOf (Abs "x" (Var "x")) --> Ok (TypeAbs (Type "a") (Type "a"))
-    typeOf (Abs "x" (Var "y")) --> Err (VariableNotFound "y")
+    typeOf (App (Var "x") (Int 42)) ctx --> Err (InvalidApply (Var "x") (Type "Integer"))
+    typeOf (App (Var "f") (Int 42)) ctx --> Ok (Type "Number")
+    typeOf (App (Var "f") (Num 3.14)) ctx --> Err (TypeMismatch (Type "Integer") (Type "Number"))
+    typeOf (App (Var "f") (Abs "x" (Int 42))) ctx --> Err (TypeMismatch (Type "Integer") (TypeAbs (Type "a") (Type "Integer")))
+    typeOf (App (Var "g") (Int 42)) ctx --> Ok (Type "Integer")
+    typeOf (App (Var "g") (Num 3.14)) ctx --> Ok (Type "Number")
+    typeOf (App (Var "g") (Abs "x" (Int 42))) ctx --> Ok (TypeAbs (Type "a") (Type "Integer"))
 
-    typeOf (App (Var "x") (Int 42)) --> Err (InvalidApply (Var "x") (Type "Integer"))
-    typeOf (App (Var "f") (Int 42)) --> Ok (Type "Number")
-    typeOf (App (Var "f") (Num 3.14)) --> Err (TypeMismatch (Type "Integer") (Type "Number"))
-    typeOf (App (Var "f") (Abs "x" (Int 42))) --> Err (TypeMismatch (Type "Integer") (TypeAbs (Type "a") (Type "Integer")))
-    typeOf (App (Var "g") (Int 42)) --> Ok (Type "Integer")
-    typeOf (App (Var "g") (Num 3.14)) --> Ok (Type "Number")
-    typeOf (App (Var "g") (Abs "x" (Int 42))) --> Ok (TypeAbs (Type "a") (Type "Integer"))
-
-    typeOf (App (Abs "x" (Int 42)) (Num 3.14)) --> Ok (Type "Integer")
-    typeOf (App (Abs "x" (Num 3.14)) (Int 42)) --> Ok (Type "Number")
-    typeOf (App (Abs "x" (Var "x")) (Int 42)) --> Ok (Type "Integer")
-    typeOf (App (Abs "x" (Var "x")) (Num 3.14)) --> Ok (Type "Number")
-    typeOf (App (Abs "x" (Var "x")) (Abs "x" (Int 42))) --> Ok (TypeAbs (Type "a") (Type "Integer"))
+    typeOf (App (Abs "x" (Int 42)) (Num 3.14)) ctx --> Ok (Type "Integer")
+    typeOf (App (Abs "x" (Num 3.14)) (Int 42)) ctx --> Ok (Type "Number")
+    typeOf (App (Abs "x" (Var "x")) (Int 42)) ctx --> Ok (Type "Integer")
+    typeOf (App (Abs "x" (Var "x")) (Num 3.14)) ctx --> Ok (Type "Number")
+    typeOf (App (Abs "x" (Var "x")) (Abs "x" (Int 42))) ctx --> Ok (TypeAbs (Type "a") (Type "Integer"))
 
 -}
+typeOf : Expression -> Context -> Result Error Type
+typeOf expr ctx =
+    map (\_ t _ -> ( t, Nothing )) expr Nothing ctx
+        |> Result.map Tuple.first
+
+
+{-| -}
 map : (Expression -> Type -> state -> ( a, state )) -> Expression -> state -> Context -> Result Error ( a, state )
 map f expr state ctx =
     inferTypes (\x t _ -> Ok (f x t state)) expr ctx
@@ -241,6 +242,7 @@ andThen2 f expr1 expr2 ctx =
 -}
 isFreeType : Type -> Context -> Bool
 isFreeType typ ctx =
+    -- TODO(DisjointSet): add a `has` method
     case DisjointSet.find typ ctx.types of
         Just _ ->
             False
