@@ -1,4 +1,4 @@
-module Lambda exposing (Context, Error(..), Expression(..), Type(..), isFreeType, map, newContext, newType, toBase, typeOf, withType, withVariable)
+module Lambda exposing (Context, Error(..), Expression(..), Type(..), evaluate, isFreeType, newContext, newType, toBase, typeOf, withType, withVariable, write)
 
 import Char
 import Dict exposing (Dict)
@@ -117,63 +117,116 @@ newType seed existing =
 
 {-|
 
-    ctx : Context
-    ctx =
-        newContext
-            |> withVariable "x" (Type "Integer")
-            |> withVariable "f" (TypeAbs (Type "Integer") (Type "Number"))
-            |> withVariable "g" (TypeAbs (Type "a") (Type "a"))
+    import Lambda
 
-    typeOf (Int 42) ctx --> Ok (Type "Integer")
-    typeOf (Num 3.14) ctx --> Ok (Type "Number")
-
-    typeOf (Var "x") ctx --> Ok (Type "Integer")
-    typeOf (Var "y") ctx --> Err (VariableNotFound "y")
-
-    typeOf (Abs "x" (Int 42)) ctx --> Ok (TypeAbs (Type "a") (Type "Integer"))
-    typeOf (Abs "x" (Var "x")) ctx --> Ok (TypeAbs (Type "a") (Type "a"))
-    typeOf (Abs "x" (Var "y")) ctx --> Err (VariableNotFound "y")
-
-    typeOf (App (Var "x") (Int 42)) ctx --> Err (InvalidApply (Var "x") (Type "Integer"))
-    typeOf (App (Var "f") (Int 42)) ctx --> Ok (Type "Number")
-    typeOf (App (Var "f") (Num 3.14)) ctx --> Err (TypeMismatch (Type "Integer") (Type "Number"))
-    typeOf (App (Var "f") (Abs "x" (Int 42))) ctx --> Err (TypeMismatch (Type "Integer") (TypeAbs (Type "a") (Type "Integer")))
-    typeOf (App (Var "g") (Int 42)) ctx --> Ok (Type "Integer")
-    typeOf (App (Var "g") (Num 3.14)) ctx --> Ok (Type "Number")
-    typeOf (App (Var "g") (Abs "x" (Int 42))) ctx --> Ok (TypeAbs (Type "a") (Type "Integer"))
-
-    typeOf (App (Abs "x" (Int 42)) (Num 3.14)) ctx --> Ok (Type "Integer")
-    typeOf (App (Abs "x" (Num 3.14)) (Int 42)) ctx --> Ok (Type "Number")
-    typeOf (App (Abs "x" (Var "x")) (Int 42)) ctx --> Ok (Type "Integer")
-    typeOf (App (Abs "x" (Var "x")) (Num 3.14)) ctx --> Ok (Type "Number")
-    typeOf (App (Abs "x" (Var "x")) (Abs "x" (Int 42))) ctx --> Ok (TypeAbs (Type "a") (Type "Integer"))
+    typeOf (Int 42) --> Ok (Type "Integer")
+    typeOf (Num 3.14) --> Ok (Type "Number")
+    typeOf (Var "x") --> Err (VariableNotFound "x")
+    typeOf (Abs "x" (Int 42)) --> Ok (TypeAbs (Type "a") (Type "Integer"))
+    typeOf (Abs "x" (Var "x")) --> Ok (TypeAbs (Type "a") (Type "a"))
+    typeOf (Abs "x" (Var "y")) --> Err (VariableNotFound "y")
+    typeOf (App (Abs "x" (Int 42)) (Num 3.14)) --> Ok (Type "Integer")
+    typeOf (App (Abs "x" (Num 3.14)) (Int 42)) --> Ok (Type "Number")
+    typeOf (App (Abs "x" (Var "x")) (Int 42)) --> Ok (Type "Integer")
+    typeOf (App (Abs "x" (Var "x")) (Num 3.14)) --> Ok (Type "Number")
+    typeOf (App (Abs "x" (Var "x")) (Abs "x" (Int 42))) --> Ok (TypeAbs (Type "a") (Type "Integer"))
 
 -}
-typeOf : Expression -> Context -> Result Error Type
-typeOf expr ctx =
-    map (\_ t _ -> ( t, Nothing )) expr Nothing ctx
-        |> Result.map Tuple.first
+typeOf : Expression -> Result Error Type
+typeOf expr =
+    inferTypes (\( _, t ) _ -> Ok t) expr newContext
 
 
-{-| -}
-map : (Expression -> Type -> state -> ( a, state )) -> Expression -> state -> Context -> Result Error ( a, state )
-map f expr state ctx =
-    inferTypes (\x t _ -> Ok (f x t state)) expr ctx
+{-|
+
+    import Lambda
+
+    evaluate (Int 42) --> Ok (Int 42, Type "Integer")
+    evaluate (Num 3.14) --> Ok (Num 3.14, Type "Number")
+    evaluate (Var "x") --> Err (VariableNotFound "x")
+    evaluate (Abs "x" (Var "x")) --> Ok ((Abs "x" (Var "x")), TypeAbs (Type "a") (Type "a"))
+    evaluate (App (Abs "x" (Int 42)) (Num 3.14)) --> Ok (Int 42, Type "Integer")
+
+-}
+evaluate : Expression -> Result Error ( Expression, Type )
+evaluate expression =
+    let
+        eval : Dict String Expression -> Expression -> Result Error ( Expression, Type )
+        eval vars expr =
+            case expr of
+                Var x ->
+                    Dict.get x vars
+                        |> Result.fromMaybe (VariableNotFound x)
+                        |> Result.andThen (eval vars)
+
+                App (Abs x outE) argE ->
+                    typeOf expr
+                        |> Result.andThen (\_ -> eval (Dict.insert x argE vars) outE)
+
+                _ ->
+                    typeOf expr
+                        |> Result.map (Tuple.pair expr)
+    in
+    eval Dict.empty expression
 
 
-inferTypes : (Expression -> Type -> Context -> Result Error a) -> Expression -> Context -> Result Error a
+{-|
+
+    import Lambda
+
+    write (Int 42) --> "42"
+    write (Num 3.14) --> "3.14"
+    write (Var "x") --> "x"
+    write (Abs "x" (Var "y")) --> "λx.y"
+    write (App (Var "f") (Var "x")) --> "f x"
+    write (App (App (Var "f") (Var "x")) (Var "y")) --> "f x y"
+    write (Abs "x" (App (Var "y") (Var "z"))) --> "λx.y z"
+    write (App (Var "f") (Abs "x" (Var "y"))) --> "f (λx.y)"
+    write (App (Abs "x" (Var "y")) (Var "z")) --> "(λx.y) z"
+    write (App (Abs "x" (Var "y")) (Abs "a" (Var "b"))) --> "(λx.y) (λa.b)"
+
+-}
+write : Expression -> String
+write expr =
+    case expr of
+        Int value ->
+            String.fromInt value
+
+        Num value ->
+            String.fromFloat value
+
+        Var x ->
+            x
+
+        Abs x outE ->
+            "λ" ++ x ++ "." ++ write outE
+
+        App ((Abs _ _) as absE) ((Abs _ _) as argE) ->
+            "(" ++ write absE ++ ") (" ++ write argE ++ ")"
+
+        App ((Abs _ _) as absE) argE ->
+            "(" ++ write absE ++ ") " ++ write argE
+
+        App absE ((Abs _ _) as argE) ->
+            write absE ++ " (" ++ write argE ++ ")"
+
+        App absE argE ->
+            write absE ++ " " ++ write argE
+
+
+inferTypes : (( Expression, Type ) -> Context -> Result Error a) -> Expression -> Context -> Result Error a
 inferTypes f expr ctx =
     case expr of
         Int _ ->
-            f expr (Type "Integer") ctx
+            f ( expr, Type "Integer" ) ctx
 
         Num _ ->
-            f expr (Type "Number") ctx
+            f ( expr, Type "Number" ) ctx
 
         Var x ->
             Dict.get x ctx.variables
                 |> Result.fromMaybe (VariableNotFound x)
-                |> Result.andThen (\t -> f expr (finalType t ctx) ctx)
+                |> Result.andThen (\t -> f ( expr, finalType t ctx ) ctx)
 
         Abs x outE ->
             let
@@ -182,10 +235,10 @@ inferTypes f expr ctx =
             in
             ctx
                 |> withVariable x xT
-                |> inferTypes (\_ outT -> f expr (TypeAbs xT (finalType outT ctx))) outE
+                |> inferTypes (\( _, outT ) -> f ( expr, TypeAbs xT (finalType outT ctx) )) outE
 
         App absE argE ->
-            andThen2
+            inferTypes2
                 (\( _, absT ) ( _, argT ) c ->
                     case absT of
                         TypeAbs inT outT ->
@@ -194,10 +247,10 @@ inferTypes f expr ctx =
                                     newCtx =
                                         unify argT inT c
                                 in
-                                f expr (finalType outT newCtx) newCtx
+                                f ( expr, finalType outT newCtx ) newCtx
 
                             else if inT == argT then
-                                f expr (finalType outT c) c
+                                f ( expr, finalType outT c ) c
 
                             else
                                 Err (TypeMismatch inT argT)
@@ -208,6 +261,11 @@ inferTypes f expr ctx =
                 absE
                 argE
                 ctx
+
+
+inferTypes2 : (( Expression, Type ) -> ( Expression, Type ) -> Context -> Result Error a) -> Expression -> Expression -> Context -> Result Error a
+inferTypes2 f expr1 expr2 ctx =
+    inferTypes (\( e1, t1 ) -> inferTypes (f ( e1, t1 )) expr2) expr1 ctx
 
 
 unify : Type -> Type -> Context -> Context
@@ -223,14 +281,6 @@ finalType typ ctx =
 
         TypeAbs t1 t2 ->
             TypeAbs (finalType t1 ctx) (finalType t2 ctx)
-
-
-andThen2 : (( Expression, Type ) -> ( Expression, Type ) -> Context -> Result Error a) -> Expression -> Expression -> Context -> Result Error a
-andThen2 f expr1 expr2 ctx =
-    inferTypes
-        (\e1 t1 -> inferTypes (\e2 t2 -> f ( e1, t1 ) ( e2, t2 )) expr2)
-        expr1
-        ctx
 
 
 {-|
