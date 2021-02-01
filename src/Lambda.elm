@@ -1,173 +1,44 @@
-module Lambda exposing (Context, Error(..), Expression(..), Type(..), evaluate, isFreeType, newContext, newType, toBase, typeOf, withType, withVariable, write)
-
-import Char
-import Dict exposing (Dict)
-import DisjointSet exposing (DisjointSet)
-
+module Lambda exposing (Error(..), Expr(..), Type(..), TypedExpr(..), evaluate, inferType, typeOf, withType, withVariable, write)
 
 {-| [Hindley-Milner lambda calculus](https://en.wikipedia.org/wiki/Simply_typed_lambda_calculus#Alternative_syntaxes)
 -}
+
+import Dict exposing (Dict)
+import DisjointSet exposing (DisjointSet)
+import Lambda.Util exposing (newLowercaseName)
+
+
 type Type
-    = Type String -- a
-    | TypeAbs Type Type -- a -> b
+    = IntType
+    | NumType
+    | Type String -- a
+    | AbsType Type Type -- a -> b
 
 
-type Expression
+type Expr
     = Int Int
     | Num Float
     | Var String -- x
-    | Abs String Expression -- λx.x
-    | App Expression Expression -- f x
+    | Abs String Expr -- λx.x
+    | App Expr Expr -- f x
+
+
+type TypedExpr
+    = TInt Int
+    | TNum Float
+    | TVar String Type -- x:A
+    | TAbs ( String, Type ) TypedExpr -- λx:A.x
+    | TApp TypedExpr TypedExpr -- (f:A) (x:B)
 
 
 type Error
     = VariableNotFound String
-    | InvalidApply Expression Type
+    | InvalidApply Expr Type
     | TypeMismatch Type Type
 
 
-type alias Context =
-    { variables : Dict String Type
-    , types : DisjointSet Type
-    }
 
-
-newContext : Context
-newContext =
-    { variables = Dict.empty
-    , types = DisjointSet.empty
-    }
-        |> withType "Integer"
-        |> withType "Number"
-
-
-withVariable : String -> Type -> Context -> Context
-withVariable name typ ctx =
-    { ctx | variables = Dict.insert name typ ctx.variables }
-
-
-withType : String -> Context -> Context
-withType name ctx =
-    -- TODO(DisjointSet): add an `add` function
-    { ctx | types = DisjointSet.union (Type name) (Type name) ctx.types }
-
-
-{-|
-
-    99 |> toBase 2 --> [1,1,0,0,0,1,1]
-
-    99 |> toBase 3 --> [1,0,2,0,0]
-
-    99 |> toBase 4 --> [1,2,0,3]
-
-    99 |> toBase 5 --> [3,4,4]
-
-    99 |> toBase 6 --> [2,4,3]
-
-    99 |> toBase 7 --> [2,0,1]
-
-    99 |> toBase 8 --> [1,4,3]
-
-    99 |> toBase 9 --> [1,2,0]
-
--}
-toBase : Int -> Int -> List Int
-toBase base num =
-    if num == 0 then
-        []
-
-    else
-        ((num // base) |> toBase base) ++ [ num |> modBy base ]
-
-
-{-|
-
-    import Dict
-
-    newType 1 [] --> Type "a"
-    newType 26 [] --> Type "z"
-    newType 27 [] --> Type "aa"
-    newType 28 [] --> Type "ab"
-
-    newType 1 [ Type "a" ] --> Type "b"
-    newType 1 [ Type "a", Type "b" ] --> Type "c"
-
--}
-newType : Int -> List Type -> Type
-newType seed existing =
-    let
-        name =
-            (case seed |> toBase (Char.toCode 'z' - Char.toCode 'a' + 2) of
-                x :: xs ->
-                    x - 1 :: xs
-
-                [] ->
-                    [ 0 ]
-            )
-                |> List.map (\x -> x + Char.toCode 'a')
-                |> List.map Char.fromCode
-                |> String.fromList
-    in
-    if List.any ((==) (Type name)) existing then
-        newType (seed + 1) existing
-
-    else
-        Type name
-
-
-{-|
-
-    import Lambda
-
-    typeOf (Int 42) --> Ok (Type "Integer")
-    typeOf (Num 3.14) --> Ok (Type "Number")
-    typeOf (Var "x") --> Err (VariableNotFound "x")
-    typeOf (Abs "x" (Int 42)) --> Ok (TypeAbs (Type "a") (Type "Integer"))
-    typeOf (Abs "x" (Var "x")) --> Ok (TypeAbs (Type "a") (Type "a"))
-    typeOf (Abs "x" (Var "y")) --> Err (VariableNotFound "y")
-    typeOf (App (Abs "x" (Int 42)) (Num 3.14)) --> Ok (Type "Integer")
-    typeOf (App (Abs "x" (Num 3.14)) (Int 42)) --> Ok (Type "Number")
-    typeOf (App (Abs "x" (Var "x")) (Int 42)) --> Ok (Type "Integer")
-    typeOf (App (Abs "x" (Var "x")) (Num 3.14)) --> Ok (Type "Number")
-    typeOf (App (Abs "x" (Var "x")) (Abs "x" (Int 42))) --> Ok (TypeAbs (Type "a") (Type "Integer"))
-
--}
-typeOf : Expression -> Result Error Type
-typeOf expr =
-    inferTypes (\( _, t ) _ -> Ok t) expr newContext
-
-
-{-|
-
-    import Lambda
-
-    evaluate (Int 42) --> Ok (Int 42, Type "Integer")
-    evaluate (Num 3.14) --> Ok (Num 3.14, Type "Number")
-    evaluate (Var "x") --> Err (VariableNotFound "x")
-    evaluate (Abs "x" (Var "x")) --> Ok ((Abs "x" (Var "x")), TypeAbs (Type "a") (Type "a"))
-    evaluate (App (Abs "x" (Int 42)) (Num 3.14)) --> Ok (Int 42, Type "Integer")
-
--}
-evaluate : Expression -> Result Error ( Expression, Type )
-evaluate expression =
-    let
-        eval : Dict String Expression -> Expression -> Result Error ( Expression, Type )
-        eval vars expr =
-            case expr of
-                Var x ->
-                    Dict.get x vars
-                        |> Result.fromMaybe (VariableNotFound x)
-                        |> Result.andThen (eval vars)
-
-                App (Abs x outE) argE ->
-                    typeOf expr
-                        |> Result.andThen (\_ -> eval (Dict.insert x argE vars) outE)
-
-                _ ->
-                    typeOf expr
-                        |> Result.map (Tuple.pair expr)
-    in
-    eval Dict.empty expression
+-- READ / WRITE
 
 
 {-|
@@ -186,7 +57,7 @@ evaluate expression =
     write (App (Abs "x" (Var "y")) (Abs "a" (Var "b"))) --> "(λx.y) (λa.b)"
 
 -}
-write : Expression -> String
+write : Expr -> String
 write expr =
     case expr of
         Int value ->
@@ -214,14 +85,152 @@ write expr =
             write absE ++ " " ++ write argE
 
 
-inferTypes : (( Expression, Type ) -> Context -> Result Error a) -> Expression -> Context -> Result Error a
+
+-- EXPRESSIONS AND TYPES
+
+
+{-|
+
+    import Lambda
+
+    typeOf (Int 42) --> Ok IntType
+    typeOf (Num 3.14) --> Ok NumType
+    typeOf (Var "x") --> Err (VariableNotFound "x")
+    typeOf (Abs "x" (Int 42)) --> Ok (AbsType (Type "a") IntType)
+    typeOf (Abs "x" (Var "x")) --> Ok (AbsType (Type "a") (Type "a"))
+    typeOf (Abs "x" (Var "y")) --> Err (VariableNotFound "y")
+    typeOf (App (Abs "x" (Int 42)) (Num 3.14)) --> Ok IntType
+    typeOf (App (Abs "x" (Num 3.14)) (Int 42)) --> Ok NumType
+    typeOf (App (Abs "x" (Var "x")) (Int 42)) --> Ok IntType
+    typeOf (App (Abs "x" (Var "x")) (Num 3.14)) --> Ok NumType
+    typeOf (App (Abs "x" (Var "x")) (Abs "x" (Int 42))) --> Ok (AbsType (Type "a") IntType)
+
+-}
+typeOf : Expr -> Result Error Type
+typeOf expr =
+    inferTypes (\( _, t ) _ -> Ok t) expr newContext
+
+
+{-|
+
+    import Lambda
+
+    evaluate (Int 42) --> Ok (Int 42, IntType)
+    evaluate (Num 3.14) --> Ok (Num 3.14, NumType)
+    evaluate (Var "x") --> Err (VariableNotFound "x")
+    evaluate (Abs "x" (Var "x")) --> Ok ((Abs "x" (Var "x")), AbsType (Type "a") (Type "a"))
+    evaluate (App (Abs "x" (Int 42)) (Num 3.14)) --> Ok (Int 42, IntType)
+
+-}
+evaluate : Expr -> Result Error ( Expr, Type )
+evaluate expression =
+    let
+        eval : Dict String Expr -> Expr -> Result Error ( Expr, Type )
+        eval vars expr =
+            case expr of
+                Var x ->
+                    Dict.get x vars
+                        |> Result.fromMaybe (VariableNotFound x)
+                        |> Result.andThen (eval vars)
+
+                App (Abs x outE) argE ->
+                    typeOf expr
+                        |> Result.andThen (\_ -> eval (Dict.insert x argE vars) outE)
+
+                _ ->
+                    typeOf expr
+                        |> Result.map (Tuple.pair expr)
+    in
+    eval Dict.empty expression
+
+
+{-|
+
+    import Lambda
+    import Lambda.IO
+
+    inferType : String -> Result Error String
+    inferType expr =
+        Lambda.IO.read expr
+            |> Result.andThen inferType
+            |> Result.andThen Lambda.IO.writeTyped
+
+    inferType "42" -- Ok "42"
+    inferType "3.14" -- Ok "3.14"
+    inferType "x" -- Err (VariableNotFound "x")
+    inferType "λx.y" -- Err (VariableNotFound "y")
+    inferType "λx.x" -- Ok "λx:a.x:a"
+    inferType "λx.42" -- Ok "λx:a.42"
+    inferType "(λx.x) 42" -- Ok "((λx:Int.x:Int):Int->Int) 42"
+    inferType "(λx.x) 3.14" -- Ok "((λx:Num.x:Num):Num->Num) 3.14"
+
+-}
+inferType : Expr -> Result Error TypedExpr
+inferType expression =
+    let
+        infer : Expr -> Context -> Result Error TypedExpr
+        infer expr ctx =
+            case expr of
+                Int value ->
+                    Ok (TInt value)
+
+                Num value ->
+                    Ok (TNum value)
+
+                Var x ->
+                    Dict.get x ctx.variables
+                        |> Result.fromMaybe (VariableNotFound x)
+                        |> Result.map (TVar x)
+
+                Abs x outE ->
+                    let
+                        xType =
+                            newType ctx
+                    in
+                    ctx
+                        |> withVariable x xType
+                        |> infer outE
+                        |> Result.map (TAbs ( x, xType ))
+
+                App absE argE ->
+                    -- inferTypes2
+                    --     (\( _, absT ) ( _, argT ) c ->
+                    --         case absT of
+                    --             AbsType inT outT ->
+                    --                 if isFreeType inT c then
+                    --                     let
+                    --                         newCtx =
+                    --                             unify argT inT c
+                    --                     in
+                    --                     f ( expr, finalType outT newCtx ) newCtx
+                    --                 else if inT == argT then
+                    --                     f ( expr, finalType outT c ) c
+                    --                 else
+                    --                     Err (TypeMismatch inT argT)
+                    --             _ ->
+                    --                 Err (InvalidApply absE absT)
+                    --     )
+                    --     absE
+                    --     argE
+                    --     ctx
+                    Result.map2
+                        (\tAbs tArg ->
+                            Debug.todo "app"
+                        )
+                        (infer absE ctx)
+                        (infer argE ctx)
+    in
+    infer expression newContext
+
+
+inferTypes : (( Expr, Type ) -> Context -> Result Error a) -> Expr -> Context -> Result Error a
 inferTypes f expr ctx =
     case expr of
         Int _ ->
-            f ( expr, Type "Integer" ) ctx
+            f ( expr, IntType ) ctx
 
         Num _ ->
-            f ( expr, Type "Number" ) ctx
+            f ( expr, NumType ) ctx
 
         Var x ->
             Dict.get x ctx.variables
@@ -231,17 +240,17 @@ inferTypes f expr ctx =
         Abs x outE ->
             let
                 xT =
-                    newType 1 (DisjointSet.toList ctx.types |> List.map Tuple.first)
+                    newType ctx
             in
             ctx
                 |> withVariable x xT
-                |> inferTypes (\( _, outT ) -> f ( expr, TypeAbs xT (finalType outT ctx) )) outE
+                |> inferTypes (\( _, outT ) -> f ( expr, AbsType xT (finalType outT ctx) )) outE
 
         App absE argE ->
             inferTypes2
                 (\( _, absT ) ( _, argT ) c ->
                     case absT of
-                        TypeAbs inT outT ->
+                        AbsType inT outT ->
                             if isFreeType inT c then
                                 let
                                     newCtx =
@@ -263,7 +272,7 @@ inferTypes f expr ctx =
                 ctx
 
 
-inferTypes2 : (( Expression, Type ) -> ( Expression, Type ) -> Context -> Result Error a) -> Expression -> Expression -> Context -> Result Error a
+inferTypes2 : (( Expr, Type ) -> ( Expr, Type ) -> Context -> Result Error a) -> Expr -> Expr -> Context -> Result Error a
 inferTypes2 f expr1 expr2 ctx =
     inferTypes (\( e1, t1 ) -> inferTypes (f ( e1, t1 )) expr2) expr1 ctx
 
@@ -276,20 +285,63 @@ unify t1 t2 ctx =
 finalType : Type -> Context -> Type
 finalType typ ctx =
     case typ of
-        Type _ ->
+        AbsType t1 t2 ->
+            AbsType (finalType t1 ctx) (finalType t2 ctx)
+
+        _ ->
             DisjointSet.find typ ctx.types |> Maybe.withDefault typ
 
-        TypeAbs t1 t2 ->
-            TypeAbs (finalType t1 ctx) (finalType t2 ctx)
 
 
-{-|
+-- CONTEXT
 
-    isFreeType (Type "Integer") newContext --> False
 
-    isFreeType (Type "a") newContext --> True
+type alias Context =
+    { variables : Dict String Type
+    , types : DisjointSet Type
+    }
 
--}
+
+newContext : Context
+newContext =
+    { variables = Dict.empty
+    , types = DisjointSet.empty
+    }
+        |> withType IntType
+        |> withType NumType
+
+
+withVariable : String -> Type -> Context -> Context
+withVariable name typ ctx =
+    { ctx | variables = Dict.insert name typ ctx.variables }
+
+
+withType : Type -> Context -> Context
+withType typ ctx =
+    -- TODO(DisjointSet): add an `add` function
+    { ctx | types = DisjointSet.union typ typ ctx.types }
+
+
+newType : Context -> Type
+newType ctx =
+    let
+        existingNames =
+            -- TODO: add DisjointSet.items to return a list of all items.
+            DisjointSet.toList ctx.types
+                |> List.map Tuple.first
+                |> List.filterMap
+                    (\typ ->
+                        case typ of
+                            Type name ->
+                                Just name
+
+                            _ ->
+                                Nothing
+                    )
+    in
+    Type (newLowercaseName 1 existingNames)
+
+
 isFreeType : Type -> Context -> Bool
 isFreeType typ ctx =
     -- TODO(DisjointSet): add a `has` method

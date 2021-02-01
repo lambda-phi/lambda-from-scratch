@@ -1,6 +1,8 @@
 {
   "root": "../src",
   "tests": [
-    "Lambda"
+    "Lambda",
+    "Lambda.IO",
+    "Lambda.Util"
   ]
 }
