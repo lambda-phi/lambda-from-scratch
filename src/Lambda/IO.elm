@@ -1,7 +1,7 @@
-module Lambda.IO exposing (read, readType, readTyped, write, writeType, writeTyped)
+module Lambda.IO exposing (read, readType, write, writeType)
 
-import Lambda exposing (Expr(..), Type(..), TypedExpr(..))
-import Parser exposing (Error, Parser, drop, map, oneOf, parse, succeed, take, textOf)
+import Lambda exposing (Error(..), Expr(..), Type(..))
+import Parser exposing (Parser, drop, map, oneOf, parse, succeed, take, textOf)
 import Parser.Char exposing (char, digit, letter)
 import Parser.Common exposing (int, number, spaces, text)
 import Parser.Expression exposing (Operator, fromRight, inbetween, term)
@@ -35,7 +35,7 @@ import Parser.Sequence exposing (concat, exactly, zeroOrMore)
 -}
 readType : String -> Result Error Type
 readType txt =
-    parse txt type_
+    parse txt type_ |> Result.mapError SyntaxError
 
 
 {-|
@@ -103,7 +103,7 @@ writeType typ =
 -}
 read : String -> Result Error Expr
 read txt =
-    parse txt expression
+    parse txt expression |> Result.mapError SyntaxError
 
 
 {-|
@@ -152,86 +152,6 @@ write expr =
 
         App absE argE ->
             write absE ++ " " ++ write argE
-
-
-
--- TYPED EXPRESSIONS
-
-
-{-|
-
-    import Lambda exposing (Type(..), TypedExpr(..))
-
-    -- Values
-    readTyped "42" --> Ok (TInt 42)
-    readTyped "3.14" --> Ok (TNum 3.14)
-
-    -- Variables
-    readTyped "x:a" --> Ok (TVar "x" (Type "a"))
-
-    -- Abstractions
-    readTyped "λx:a.y:b" --> Ok (TAbs ("x", Type "a") (TVar "y" (Type "b")))
-    readTyped "λx:a.λy:b.z:c" --> Ok (TAbs ("x", Type "a") (TAbs ("y", Type "b") (TVar "z" (Type "c"))))
-
-    -- Applications
-    readTyped "f:a x:b" --> Ok (TApp (TVar "f" (Type "a")) (TVar "x" (Type "b")))
-    readTyped "f:a x:b y:c" --> Ok (TApp (TApp (TVar "f" (Type "a")) (TVar "x" (Type "b"))) (TVar "y" (Type "c")))
-    readTyped "f:a (x:b y:c)" --> Ok (TApp (TVar "f" (Type "a")) (TApp (TVar "x" (Type "b")) (TVar "y" (Type "c"))))
-    readTyped "λx:a.y:b z:c" --> Ok (TAbs ("x", Type "a") (TApp (TVar "y" (Type "b")) (TVar "z" (Type "c"))))
-    readTyped "(λx:a.y:b) z:c" --> Ok (TApp (TAbs ("x", Type "a") (TVar "y" (Type "b"))) (TVar "z" (Type "c")))
-
--}
-readTyped : String -> Result Error TypedExpr
-readTyped txt =
-    parse txt typedExpression
-
-
-{-|
-
-    import Lambda exposing (Type(..), TypedExpr(..))
-
-    -- Values
-    writeTyped (TInt 42) --> "42"
-    writeTyped (TNum 3.14) --> "3.14"
-
-    -- Variables
-    writeTyped (TVar "x" (Type "a")) --> "x:a"
-
-    -- Abstractions
-    writeTyped (TAbs ("x", Type "a") (TVar "y" (Type "b"))) --> "λx:a.y:b"
-    writeTyped (TAbs ("x", Type "a") (TAbs ("y", Type "b") (TVar "z" (Type "c")))) --> "λx:a.λy:b.z:c"
-
-    -- Applications
-    writeTyped (TApp (TVar "f" (Type "a")) (TVar "x" (Type "b"))) --> "f:a x:b"
-    writeTyped (TApp (TApp (TVar "f" (Type "a")) (TVar "x" (Type "b"))) (TVar "y" (Type "c"))) --> "f:a x:b y:c"
-    writeTyped (TApp (TVar "f" (Type "a")) (TApp (TVar "x" (Type "b")) (TVar "y" (Type "c")))) --> "f:a (x:b y:c)"
-    writeTyped (TAbs ("x", Type "a") (TApp (TVar "y" (Type "b")) (TVar "z" (Type "c")))) --> "λx:a.y:b z:c"
-    writeTyped (TApp (TAbs ("x", Type "a") (TVar "y" (Type "b"))) (TVar "z" (Type "c"))) --> "(λx:a.y:b) z:c"
-
--}
-writeTyped : TypedExpr -> String
-writeTyped typedExpr =
-    case typedExpr of
-        TInt value ->
-            String.fromInt value
-
-        TNum value ->
-            String.fromFloat value
-
-        TVar name typ ->
-            name ++ ":" ++ writeType typ
-
-        TAbs ( name, typ ) outE ->
-            "λ" ++ name ++ ":" ++ writeType typ ++ "." ++ writeTyped outE
-
-        TApp absE ((TApp _ _) as argE) ->
-            writeTyped absE ++ " (" ++ writeTyped argE ++ ")"
-
-        TApp ((TAbs _ _) as absE) argE ->
-            "(" ++ writeTyped absE ++ ") " ++ writeTyped argE
-
-        TApp absE argE ->
-            writeTyped absE ++ " " ++ writeTyped argE
 
 
 
@@ -292,55 +212,5 @@ expression =
           , term (map Int int)
           , term (map Num number)
           , term (map Var identifier)
-          ]
-        ]
-
-
-typedExpression : Parser TypedExpr
-typedExpression =
-    let
-        variable : Parser TypedExpr
-        variable =
-            succeed TVar
-                |> take identifier
-                |> drop spaces
-                |> drop (char ':')
-                |> drop spaces
-                |> take type_
-
-        application : Operator TypedExpr
-        application =
-            Parser.Expression.InfixFromLeft
-                (\expr ->
-                    succeed (\right left -> TApp left right)
-                        |> drop spaces
-                        |> take expr
-                )
-
-        abstraction : Operator TypedExpr
-        abstraction =
-            Parser.Expression.Prefix
-                (\expr ->
-                    succeed (\name typ -> TAbs ( name, typ ))
-                        |> drop (char 'λ')
-                        |> drop spaces
-                        |> take identifier
-                        |> drop spaces
-                        |> drop (char ':')
-                        |> drop spaces
-                        |> take type_
-                        |> drop spaces
-                        |> drop (text ".")
-                        |> drop spaces
-                        |> take expr
-                )
-    in
-    Parser.Expression.expression
-        [ [ application ]
-        , [ abstraction ]
-        , [ inbetween (char '(') (char ')') identity
-          , term (map TInt int)
-          , term (map TNum number)
-          , term variable
           ]
         ]
