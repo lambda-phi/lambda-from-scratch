@@ -100,6 +100,9 @@ writeType typ =
     read "λx.y z" --> Ok (Abs "x" (App (Var "y") (Var "z")))
     read "(λx.y) z" --> Ok (App (Abs "x" (Var "y")) (Var "z"))
 
+    -- Variable definitions (syntax sugar)
+    read "x=y; z" --> Ok (App (Abs "x" (Var "z")) (Var "y"))
+
 -}
 read : String -> Result Error Expr
 read txt =
@@ -126,7 +129,9 @@ read txt =
     write (App (App (Var "f") (Var "x")) (Var "y")) --> "f x y"
     write (App (Var "f") (App (Var "x") (Var "y"))) --> "f (x y)"
     write (Abs "x" (App (Var "y") (Var "z"))) --> "λx.y z"
-    write (App (Abs "x" (Var "y")) (Var "z")) --> "(λx.y) z"
+
+    -- Variable definitions (syntax sugar)
+    write (App (Abs "x" (Var "z")) (Var "y")) --> "x=y; z"
 
 -}
 write : Expr -> String
@@ -147,8 +152,8 @@ write expr =
         App absE ((App _ _) as argE) ->
             write absE ++ " (" ++ write argE ++ ")"
 
-        App ((Abs _ _) as absE) argE ->
-            "(" ++ write absE ++ ") " ++ write argE
+        App (Abs name outE) value ->
+            name ++ "=" ++ write value ++ "; " ++ write outE
 
         App absE argE ->
             write absE ++ " " ++ write argE
@@ -204,11 +209,28 @@ expression =
                         |> drop spaces
                         |> take expr
                 )
+
+        variableDefinition : Operator Expr
+        variableDefinition =
+            Parser.Expression.Prefix
+                (\expr ->
+                    succeed (\name value outE -> App (Abs name outE) value)
+                        |> take identifier
+                        |> drop spaces
+                        |> drop (char '=')
+                        |> drop spaces
+                        |> take expr
+                        |> drop spaces
+                        |> drop (char ';')
+                        |> drop spaces
+                        |> take expr
+                )
     in
     Parser.Expression.expression
         [ [ application ]
         , [ abstraction ]
         , [ inbetween (char '(') (char ')') identity
+          , variableDefinition
           , term (map Int int)
           , term (map Num number)
           , term (map Var identifier)
