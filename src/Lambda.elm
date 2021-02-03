@@ -203,12 +203,8 @@ type alias Context =
 
 newContext : Context
 newContext =
-    -- TODO(DisjointSet): add an `add` function
     { variables = Dict.empty
-    , types =
-        DisjointSet.empty
-            |> DisjointSet.union IntType IntType
-            |> DisjointSet.union NumType NumType
+    , types = DisjointSet.add [ IntType, NumType ] DisjointSet.empty
     , freeTypes = Set.empty
     }
 
@@ -217,9 +213,7 @@ withNewType : Context -> ( Type, Context )
 withNewType ctx =
     let
         existingNames =
-            -- TODO: add DisjointSet.items to return a list of all items.
-            DisjointSet.toList ctx.types
-                |> List.map Tuple.first
+            DisjointSet.items ctx.types
                 |> List.filterMap
                     (\typ ->
                         case typ of
