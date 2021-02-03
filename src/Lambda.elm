@@ -56,17 +56,18 @@ type Error
 
     -- Applications
     eval "1 2" --> Err (TypeMismatch IntType (AbsType IntType (Type "a")))
-    eval "λf.f 42" --> Ok ("λf.f 42", "(@Int->b)->b")
+    eval "λf.f 42" --> Ok ("λf.f 42", "(@Int->a)->a")
     eval "(λx.x) 42" --> Ok ("42", "@Int")
     eval "x=42; x" --> Ok ("42", "@Int")
-    eval "f=λx.42; f" --> Ok ("λx.42", "e->@Int")
+    eval "f=λx.42; f" --> Ok ("λx.42", "a->@Int")
     eval "f=λx.42; f 3.14" --> Ok ("42", "@Int")
 
 -}
 evaluate : Expr -> Result Error ( Expr, Type )
-evaluate expression =
-    eval expression newContext
+evaluate expr =
+    eval expr newContext
         |> Result.map Tuple.first
+        |> Result.map (\( e, t ) -> ( e, canonicalize t Dict.empty |> Tuple.first ))
 
 
 eval : Expr -> Context -> Result Error ( ( Expr, Type ), Context )
@@ -123,6 +124,38 @@ eval expr ctx =
                 )
                 (eval absE ctx)
                 (eval argE)
+
+
+canonicalize : Type -> Dict String Type -> ( Type, Dict String Type )
+canonicalize typ types =
+    case typ of
+        IntType ->
+            ( typ, types )
+
+        NumType ->
+            ( typ, types )
+
+        Type name ->
+            case Dict.get name types of
+                Just newType ->
+                    ( newType, types )
+
+                Nothing ->
+                    let
+                        newType =
+                            Type (newLowercaseName 1 (Dict.keys types))
+                    in
+                    ( newType, Dict.insert name newType types )
+
+        AbsType t1 t2 ->
+            let
+                ( newType1, types1 ) =
+                    canonicalize t1 types
+
+                ( newType2, types2 ) =
+                    canonicalize t2 types1
+            in
+            ( AbsType newType1 newType2, types2 )
 
 
 andThen : (( Expr, Type ) -> Context -> Result Error ( ( Expr, Type ), Context )) -> Result Error ( ( Expr, Type ), Context ) -> Result Error ( ( Expr, Type ), Context )
