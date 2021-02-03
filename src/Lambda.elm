@@ -34,13 +34,18 @@ type Error
 {-|
 
     import Lambda
-    import Lambda.IO
+    import Lambda.Read
+    import Lambda.Write
 
     eval : String -> Result Error (String, String)
     eval txt =
-        Lambda.IO.read txt
+        Lambda.Read.expression txt
             |> Result.andThen evaluate
-            |> Result.map (Tuple.mapBoth Lambda.IO.write Lambda.IO.writeType)
+            |> Result.map
+                ( Tuple.mapBoth
+                    Lambda.Write.expression
+                    Lambda.Write.type_
+                )
 
     -- Values
     eval "42" --> Ok ("42", "@Int")
