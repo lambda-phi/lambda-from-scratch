@@ -1,6 +1,6 @@
 {
     "type": "package",
-    "name": "davidcavazos/lvm",
+    "name": "lambda-phi/lambda",
     "summary": "an optimizing compiler using lambda calculus",
     "license": "MIT",
     "version": "1.0.0",

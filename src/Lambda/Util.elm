@@ -1,6 +1,13 @@
 module Lambda.Util exposing (newLowercaseName, toBase)
 
-{-|
+{-| Utility functions used by the package.
+
+@docs newLowercaseName, toBase
+
+-}
+
+
+{-| Generates a new unique name consisting only of lowercase letters.
 
     import Lambda.Util exposing (newLowercaseName)
 
@@ -13,8 +20,6 @@ module Lambda.Util exposing (newLowercaseName, toBase)
     newLowercaseName 1 [ "a", "b" ] --> "c"
 
 -}
-
-
 newLowercaseName : Int -> List String -> String
 newLowercaseName seed existing =
     let
@@ -37,7 +42,7 @@ newLowercaseName seed existing =
         name
 
 
-{-|
+{-| Converts a decimal integer to another base as a `List Int`.
 
     import Lambda.Util exposing (toBase)
 

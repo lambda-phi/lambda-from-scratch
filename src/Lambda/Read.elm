@@ -1,4 +1,10 @@
-module Lambda.Read exposing (expression, type_)
+module Lambda.Read exposing (type_, expression)
+
+{-| Read Lambda types and expressions.
+
+@docs type_, expression
+
+-}
 
 import Lambda exposing (Error(..), Expr(..), Type(..))
 import Parser exposing (Parser, drop, map, oneOf, parse, succeed, take, textOf)
@@ -8,7 +14,7 @@ import Parser.Expression exposing (Operator, fromRight, inbetween, term)
 import Parser.Sequence exposing (concat, exactly, zeroOrMore)
 
 
-{-|
+{-| Reads a Lambda type from a text representation.
 
     import Lambda exposing (Type(..))
     import Lambda.Read
@@ -35,7 +41,7 @@ type_ txt =
     parse txt typeParser |> Result.mapError SyntaxError
 
 
-{-|
+{-| Reads a Lambda expression from a text representation.
 
     import Lambda exposing (Expr(..))
     import Lambda.Read

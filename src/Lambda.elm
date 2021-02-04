@@ -1,6 +1,14 @@
-module Lambda exposing (Error(..), Expr(..), Type(..), evaluate)
+module Lambda exposing
+    ( Type(..), Expr(..), Error(..)
+    , evaluate
+    )
 
-{-| [Hindley-Milner lambda calculus](https://en.wikipedia.org/wiki/Simply_typed_lambda_calculus#Alternative_syntaxes)
+{-| A simple Lambda calculus implementation with type inference.
+
+@docs Type, Expr, Error
+
+@docs evaluate
+
 -}
 
 import Dict exposing (Dict)
@@ -10,62 +18,49 @@ import Parser
 import Set exposing (Set)
 
 
+{-| A Lambda calculus type.
+-}
 type Type
-    = IntType
-    | NumType
+    = IntType -- @Int
+    | NumType -- @Num
     | Type String -- a
     | AbsType Type Type -- a -> b
 
 
+{-| A Lambda calculus expression.
+-}
 type Expr
-    = Int Int
-    | Num Float
+    = Int Int -- 42
+    | Num Float -- 3.14
     | Var String -- x
     | Abs String Expr -- λx.x
     | App Expr Expr -- f x
 
 
+{-| An error from parsing or evaluation.
+-}
 type Error
     = SyntaxError Parser.Error
     | VariableNotFound String
     | TypeMismatch Type Type
 
 
-{-|
+{-| Evaluates an expression and returns either an `(Expr, Type)` pair, or an `Error`.
 
     import Lambda
-    import Lambda.Read
-    import Lambda.Write
 
-    eval : String -> Result Error (String, String)
-    eval txt =
-        Lambda.Read.expression txt
-            |> Result.andThen evaluate
-            |> Result.map
-                ( Tuple.mapBoth
-                    Lambda.Write.expression
-                    Lambda.Write.type_
-                )
+    -- Builtin values
+    evaluate (Int 42) --> Ok (Int 42, IntType)
+    evaluate (Num 3.14) --> Ok (Num 3.14, NumType)
 
-    -- Values
-    eval "42" --> Ok ("42", "@Int")
-    eval "3.14" --> Ok ("3.14", "@Num")
+    -- Variable: x
+    evaluate (Var "x") --> Err (VariableNotFound "x")
 
-    -- Variables
-    eval "x" --> Err (VariableNotFound "x")
+    -- Abstraction: λx.x
+    evaluate (Abs "x" (Var "x")) --> Ok (Abs "x" (Var "x"), AbsType (Type "a") (Type "a"))
 
-    -- Abstractions
-    eval "λx.42" --> Ok ("λx.42", "a->@Int")
-    eval "λx.x" --> Ok ("λx.x", "a->a")
-    eval "λx.y" --> Err (VariableNotFound "y")
-
-    -- Applications
-    eval "1 2" --> Err (TypeMismatch IntType (AbsType IntType (Type "a")))
-    eval "λf.f 42" --> Ok ("λf.f 42", "(@Int->a)->a")
-    eval "(λx.x) 42" --> Ok ("42", "@Int")
-    eval "x=42; x" --> Ok ("42", "@Int")
-    eval "f=λx.42; f" --> Ok ("λx.42", "a->@Int")
-    eval "f=λx.42; f 3.14" --> Ok ("42", "@Int")
+    -- Application: (λx.x) 42
+    evaluate (App (Abs "x" (Var "x")) (Int 42)) --> Ok (Int 42, IntType)
 
 -}
 evaluate : Expr -> Result Error ( Expr, Type )

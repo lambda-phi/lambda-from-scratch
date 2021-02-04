@@ -1,9 +1,15 @@
-module Lambda.Write exposing (expression, type_)
+module Lambda.Write exposing (type_, expression)
+
+{-| Write Lambda types and expressions.
+
+@docs type_, expression
+
+-}
 
 import Lambda exposing (Error(..), Expr(..), Type(..))
 
 
-{-|
+{-| Writes a Lambda type into a text representation.
 
     import Lambda exposing (Type(..))
     import Lambda.Write
@@ -40,7 +46,7 @@ type_ typ =
             type_ t1 ++ "->" ++ type_ t2
 
 
-{-|
+{-| Writes a Lambda expression into a text representation.
 
     import Lambda exposing (Expr(..))
     import Lambda.Write

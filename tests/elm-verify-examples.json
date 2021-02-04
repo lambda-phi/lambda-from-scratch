@@ -4,6 +4,7 @@
     "Lambda",
     "Lambda.Read",
     "Lambda.Util",
-    "Lambda.Write"
+    "Lambda.Write",
+    "README.md"
   ]
 }
