@@ -2,9 +2,6 @@
   "root": "../src",
   "tests": [
     "Lambda",
-    "Lambda.Read",
-    "Lambda.Util",
-    "Lambda.Write",
     "README.md"
   ]
 }

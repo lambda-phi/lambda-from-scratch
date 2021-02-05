@@ -9,42 +9,36 @@ Lambda calculus is a very simple
 This makes it very straightforward to evaluate, optimize, translage, and this makes it a very good candidate for a language intermediate representation.
 
 ```elm
-import Lambda exposing (Error(..), Expr(..), Type(..), evaluate)
-import Lambda.Read
-import Lambda.Write
+import Lambda exposing (Error(..), Expr(..), Type(..), evaluate, read, write)
 
 
 -- Evaluate a text expression, and return us the result and its type.
-eval : String -> Result Error (String, String)
+eval : String -> Result Error String
 eval txt =
-    Lambda.Read.expression txt
+    read txt
         |> Result.andThen evaluate
-        |> Result.map
-            ( Tuple.mapBoth
-                Lambda.Write.expression
-                Lambda.Write.type_
-            )
+        |> Result.map write
 
 
 -- Builtin values
-eval "42" --> Ok ("42", "@Int")
-eval "3.14" --> Ok ("3.14", "@Num")
+eval "42" --> Ok "42"
+eval "3.14" --> Ok "3.14"
 
 -- Variables (must be defined in an abstraction)
 eval "x" --> Err (VariableNotFound "x")
 
 -- Abstraction
-eval "λx.42" --> Ok ("λx.42", "a->@Int")
-eval "λx.x" --> Ok ("λx.x", "a->a")
+eval "λx.42" --> Ok "λx:a.42"
+eval "λx.x" --> Ok "λx:a.x"
 eval "λx.y" --> Err (VariableNotFound "y")
 
 -- Application
-eval "1 2" --> Err (TypeMismatch IntType (AbsType IntType (Type "a")))
-eval "λf.f 42" --> Ok ("λf.f 42", "(@Int->a)->a")
-eval "(λx.x) 42" --> Ok ("42", "@Int")
+eval "1 2" --> Err (TypeMismatch IntT (AbsT IntT (T "a")))
+eval "λf.f 42" --> Ok "λf:@Int->a.f 42"
+eval "(λx.x) 42" --> Ok "42"
 
 -- Variable declaration (syntax sugar)
-eval "x=42; x" --> Ok ("42", "@Int")
-eval "f=λx.42; f" --> Ok ("λx.42", "a->@Int")
-eval "f=λx.42; f 3.14" --> Ok ("42", "@Int")
+eval "x=42; x" --> Ok "42"
+eval "f=λx.42; f" --> Ok "λx:a.42"
+eval "f=λx.42; f 3.14" --> Ok "42"
 ```
