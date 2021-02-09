@@ -70,18 +70,18 @@ type Error
     -- Variables
     read "x" --> Ok (VarE "x")
 
-    -- Abstractions
+    -- Abstraction
     read "λx.y" --> Ok (AbsE "x" (VarE "y"))
     read "λx.λy.z" --> Ok (AbsE "x" (AbsE "y" (VarE "z")))
 
-    -- Applications
+    -- Application
     read "f x" --> Ok (AppE (VarE "f") (VarE "x"))
     read "f x y" --> Ok (AppE (AppE (VarE "f") (VarE "x")) (VarE "y"))
     read "f (x y)" --> Ok (AppE (VarE "f") (AppE (VarE "x") (VarE "y")))
     read "λx.y z" --> Ok (AbsE "x" (AppE (VarE "y") (VarE "z")))
     read "(λx.y) z" --> Ok (AppE (AbsE "x" (VarE "y")) (VarE "z"))
 
-    -- Variable definitions (syntax sugar)
+    -- Variable definition (syntax sugar)
     read "x=y; z" --> Ok (AppE (AbsE "x" (VarE "z")) (VarE "y"))
 
 -}
@@ -137,17 +137,17 @@ writeType typ =
     -- Variables
     write (Var "x" (T "a")) --> "x"
 
-    -- Abstractions
+    -- Abstraction
     write (Abs ("x", T "a") (Var "y" (T "b"))) --> "λx:a.y"
     write (Abs ("x", T "a") (Abs ("y", T "b") (Var "z" (T "c")))) --> "λx:a.λy:b.z"
 
-    -- Applications
+    -- Application
     write (App (Var "f" (T "a")) (Var "x" (T "b")) (T "c")) --> "f x"
     write (App (App (Var "f" (T "a")) (Var "x" (T "b")) (T "c")) (Var "y" (T "d")) (T "e")) --> "f x y"
     write (App (Var "f" (T "a")) (App (Var "x" (T "b")) (Var "y" (T "c")) (T "d")) (T "d")) --> "f (x y)"
     write (Abs ("x", T "a") (App (Var "y" (T "b")) (Var "z" (T "c")) (T "d"))) --> "λx:a.y z"
 
-    -- Variable definitions (syntax sugar)
+    -- Variable definition (syntax sugar)
     write (App (Abs ("x", T "a") (Var "z" (T "c"))) (Var "y" (T "b")) (T "c")) --> "x:a=y; z"
 
 -}

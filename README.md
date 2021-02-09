@@ -37,7 +37,7 @@ eval "1 2" --> Err (TypeMismatch IntT (AbsT IntT (T "a")))
 eval "λf.f 42" --> Ok "λf:@Int->a.f 42"
 eval "(λx.x) 42" --> Ok "42"
 
--- Variable declaration (syntax sugar)
+-- Variable definition (syntax sugar)
 eval "x=42; x" --> Ok "42"
 eval "f=λx.42; f" --> Ok "λx:a.42"
 eval "f=λx.42; f 3.14" --> Ok "42"
