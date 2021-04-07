@@ -8,37 +8,42 @@ Lambda calculus is a very simple
 [Turing complete](https://en.wikipedia.org/wiki/Turing_completeness) computational model.
 This makes it very straightforward to evaluate, optimize, translage, and this makes it a very good candidate for a language intermediate representation.
 
+Here are some examples on how to represent different expressions.
+
 ```elm
-import Lambda exposing (Error(..), Expr(..), Type(..), evaluate, read, write)
+import Lambda exposing (Error, read, write)
 
+readWrite : String -> Result Error String
+readWrite txt =
+    read txt |> Result.map write
 
--- Evaluate a text expression, and return us the result and its type.
-eval : String -> Result Error String
-eval txt =
-    read txt
-        |> Result.andThen evaluate
-        |> Result.map write
+-- Values
+readWrite "42"   --> Ok "42"
+readWrite "3.14" --> Ok "3.14"
 
-
--- Builtin values
-eval "42" --> Ok "42"
-eval "3.14" --> Ok "3.14"
-
--- Variables (must be defined in an abstraction)
-eval "x" --> Err (VariableNotFound "x")
+-- Variables
+readWrite "x" --> Ok "x"
 
 -- Abstraction
-eval "λx.42" --> Ok "λx:a.42"
-eval "λx.x" --> Ok "λx:a.x"
-eval "λx.y" --> Err (VariableNotFound "y")
+readWrite "λx -> y"       --> Ok "λx -> y"
+readWrite "λx y -> z"     --> Ok "λx y -> z"
+readWrite "λx -> λy -> z" --> Ok "λx y -> z"
 
 -- Application
-eval "1 2" --> Err (TypeMismatch IntT (AbsT IntT (T "a")))
-eval "λf.f 42" --> Ok "λf:@Int->a.f 42"
-eval "(λx.x) 42" --> Ok "42"
+readWrite "f x"   --> Ok "f x"
+readWrite "f x y" --> Ok "f x y"
 
--- Variable definition (syntax sugar)
-eval "x=42; x" --> Ok "42"
-eval "f=λx.42; f" --> Ok "λx:a.42"
-eval "f=λx.42; f 3.14" --> Ok "42"
+-- Typed expression
+readWrite "x : a"       --> Ok "x : a"
+readWrite "x : Bool"    --> Ok "x : Bool"
+readWrite "x : Maybe a" --> Ok "x : Maybe a"
+
+-- Type abstraction
+readWrite "a -> b" --> Ok "a -> b"
+
+-- Variable definitions
+readWrite "(λx -> z) y"     --> Ok "x := y; z"
+readWrite "x := y; z"       --> Ok "x := y; z"
+readWrite "x := (y : a); z" --> Ok "x : a = y; z"
+readWrite "x : a = y; z"    --> Ok "x : a = y; z"
 ```
