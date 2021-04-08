@@ -91,9 +91,9 @@ newEnv : Env ()
 newEnv =
     { names =
         Dict.fromList
-            [ ( "Type", ( Var "Type", Var "Type" ) )
-            , ( "Int", ( Var "Int", Var "Type" ) )
-            , ( "Num", ( Var "Num", Var "Type" ) )
+            [ ( "Type", ( Var "Type", Var "a" ) )
+            , ( "Int", ( Var "Type", Var "a" ) )
+            , ( "Num", ( Var "Type", Var "a" ) )
             ]
     , equivalentTypes = DisjointSet.empty
     , typeNameSeed = 1
@@ -483,36 +483,36 @@ letVar name value expr =
 
 {-| Defines a new tagged union type.
 
-    -- @T = A; x -- syntax requires at least one constructor
+    -- @T = A; x
     Ok  (letType "T" []
             ( "A", Var "T" )
             []
             (Var "x")
         )
-    --> [ "T : Type = A"
+    --> [ "T : A = Type"
     --> , "A : T = λa -> a"
     --> , "x"
     --> ] |> String.join ";" |> read
 
-    -- @T a b c = A; x
-    Ok  (letType "T" [ "a", "b", "c" ]
-            ( "A", App (App (App (Var "T") (Var "a")) (Var "b")) (Var "c") )
+    -- @T a b = A; x
+    Ok  (letType "T" [ "a", "b" ]
+            ( "A", App (App (Var "T") (Var "a")) (Var "b") )
             []
             (Var "x")
         )
-    --> [ "T : a -> b -> c -> Type = A"
-    --> , "A : T a b c = λd -> d"
+    --> [ "T : A = λa b -> Type"
+    --> , "A : T a b = λc -> c"
     --> , "x"
     --> ] |> String.join ";" |> read
 
-    -- @T a = A a; x
+    -- @T a = A a a; x
     Ok  (letType "T" [ "a" ]
-            ( "A", TAbs (Var "a") (App (Var "T") (Var "a")) )
+            ( "A", TAbs (Var "a") (TAbs (Var "a") (App (Var "T") (Var "a"))) )
             []
             (Var "x")
         )
-    --> [ "T : a -> Type = A"
-    --> , "A : a -> T a = λc -> λb -> b c"
+    --> [ "T : A = λa -> Type"
+    --> , "A : a -> a -> T a = λc d -> λb -> b c d"
     --> , "x"
     --> ] |> String.join ";" |> read
 
@@ -524,72 +524,52 @@ letVar name value expr =
             ]
             (Var "x")
         )
-    --> [ "T : Type = A | B | C"
+    --> [ "T : A | B | C = Type"
     --> , "A : T = λa b c -> a"
     --> , "B : T = λa b c -> b"
     --> , "C : T = λa b c -> c"
     --> , "x"
     --> ] |> String.join ";" |> read
 
-    -- @Maybe a = Just a | Nothing; x
-    Ok (letType "Maybe" [ "a" ]
-            ( "Just", TAbs (Var "a") (App (Var "Maybe") (Var "a")) )
-            [ ( "Nothing", App (Var "Maybe") (Var "a") ) ]
-            (Var "x")
-        )
-    --> [ "Maybe : a -> Type = Just | Nothing"
-    --> , "Just : a -> Maybe a = λd -> λb c -> b d"
-    --> , "Nothing : Maybe a = λb c -> c"
-    --> , "x"
-    --> ] |> String.join ";" |> read
-
-    -- @Vec Int a
-    --      = a :: Vec n a : Vec (n + 1) a
-    --      | [] : Vec 0 a; x
-    Ok (letType "Vec" [ "Int", "a" ]
-            ( "Cons", TAbs (Var "a") (TAbs (App (App (Var "Vec") (Var "n")) (Var "a")) (App (App (Var "Vec") (Add (Var "n") (Int 1))) (Var "a"))) )
-            [ ( "Nil", App (App (Var "Vec") (Int 0)) (Var "a") )
-            ]
-            (Var "x")
-        )
-        |> Result.map write
-    --> [ "Vec : Int -> a -> Type = Cons | Nil"
-    --> , "Cons : a -> Vec n a -> Vec (n + 1) a = λd e b c -> b d e"
-    --> , "Nil : Vec 0 a = λb c -> c"
-    --> , "x"
-    --> ] |> String.join "; " |> Ok --read
-
 -}
 letType : String -> List String -> ( String, Type ) -> List ( String, Type ) -> Expr -> Expr
 letType name args ctorHead ctorsTail expr =
     let
+        -- Example:
+        --  type Maybe a = Just a | Nothing
+        --      Maybe : Just | Nothing = λa -> Type
+        --      Just : a -> Maybe a = λd -> λb c -> b c
+        --      Nothing : Maybe a = λb c -> c
         ctors : List ( String, Type )
         ctors =
+            -- [ ( "Just", Abs "a" (App (Var "Maybe") (Var "a")) ) -- Just : a -> Maybe a
+            -- , ( "Nothing", App (Var "Maybe") (Var "a") )        -- Nothing : Maybe a
+            -- ]
             ctorHead :: ctorsTail
 
         ctorInputTypes : List (List Type)
         ctorInputTypes =
+            -- [ [ Var "a" ] -- Just [ Var "a" ]
+            -- , []          -- Nothing []
+            -- ]
             List.map Tuple.second ctors
                 |> List.map asFuncType
                 |> List.map Tuple.first
 
-        def : Type
-        def =
+        typ : Type
+        typ =
+            -- Just | Nothing
             List.foldl (\y x -> Or x y)
                 (Var (Tuple.first ctorHead))
                 (List.map Var (List.map Tuple.first ctorsTail))
 
-        typ : Type
-        typ =
-            List.map Var args
-                |> List.foldr TAbs (Var "Type")
-
         choices : List String
         choices =
+            -- [ "b", "c" ]
             newVarNames (List.length ctors) 1 (Set.fromList args)
     in
     letVar name
-        (TE def typ)
+        (TE (func args (Var "Type")) typ)
         (List.foldr
             (\( ( ctorName, ctorType ), ( choice, inputTypes ) ) ->
                 let
@@ -865,15 +845,19 @@ eval_ =
     envWithA =
         { newEnv
             | names = Dict.fromList
-                [ ( "Int", ( Var "Int", Var "Type" ) )
-                , ( "x", ( Int 42, Var "Int" ) )
+                [ ( "x", ( Int 42, Var "Int" ) )
+                , ( "Type", ( Var "Type", Var "a" ) )
+                , ( "Int", ( Var "Type", Var "a" ) )
+                , ( "T", ( Abs "a" (Var "Type"), TAbs (Var "a") (Var "b") ) )
                 ]
             ,equivalentTypes = union (Var "a") (Var "b") empty
         }
 
     -- Defined names must be types.
-    resolveType (Var "Int") envWithA |> .result --> Ok (Var "Int")
-    resolveType (Var "x") envWithA |> .result   --> Err (NotAType (Var "x"))
+    resolveType (Var "x") envWithA |> .result     --> Err (NotAType (Var "x"))
+    resolveType (Var "Int") envWithA |> .result   --> Ok (Var "Int")
+    resolveType (Var "T") envWithA |> .result     --> Err (NotAType (Var "T"))
+    resolveType (App (Var "T") (Var "Int")) envWithA |> .result --> Ok (App (Var "T") (Var "Int"))
 
     -- Undefined names are type variables.
     resolveType (Var "a") newEnv |> .result   --> Ok (Var "a")
@@ -896,7 +880,7 @@ resolveType typ env =
                 ( Just t, _ ) ->
                     withValue t env
 
-                ( _, Just ( _, Var "Type" ) ) ->
+                ( _, Just ( Var "Type", _ ) ) ->
                     withValue (Var x) env
 
                 ( Nothing, Nothing ) ->
@@ -910,6 +894,12 @@ resolveType typ env =
             map2 TAbs
                 (resolveType_ type1 env)
                 (resolveType_ type2)
+
+        App _ _ ->
+            eval typ env
+                |> map Tuple.first
+                |> andThen resolveType_
+                |> withValue typ
 
         _ ->
             withError (NotAType typ) env
