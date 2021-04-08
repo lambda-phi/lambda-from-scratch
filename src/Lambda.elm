@@ -116,14 +116,18 @@ newEnv =
     read "λx -> y"   --> Ok (Abs "x" (Var "y"))
     read "λx y -> z" --> Ok (Abs "x" (Abs "y" (Var "z")))
 
-    -- Type abstraction
-    read "a -> b" --> Ok (TAbs (Var "a") (Var "b"))
-
     -- Application
     read "f x" --> Ok (App (Var "f") (Var "x"))
 
+    -- TODO: ^ * +
+
     -- Typed expression
     read "x : a" --> Ok (TE (Var "x") (Var "a"))
+
+    -- TODO: |
+
+    -- Type abstraction
+    read "a -> b" --> Ok (TAbs (Var "a") (Var "b"))
 
     -- Variable definitions
     read "x := y; z"    --> Ok (letVar "x" (Var "y") (Var "z"))
@@ -219,14 +223,18 @@ read txt =
     -- Abstraction
     write (Abs "x" (Var "y")) --> "λx -> y"
 
-    -- Type abstraction
-    write (TAbs (Var "a") (Var "b")) --> "a -> b"
-
     -- Application
     write (App (Var "f") (Var "x")) --> "f x"
 
+    -- TODO: ^ * +
+
     -- Typed expression
     write (TE (Var "x") (Var "a")) --> "x : a"
+
+    -- TODO: |
+
+    -- Type abstraction
+    write (TAbs (Var "a") (Var "b")) --> "a -> b"
 
     -- Variable definitions
     write (App (Abs "x" (Var "z")) (Var "y"))                --> "x := y; z"
@@ -735,12 +743,16 @@ newTypeVar env =
     evalFrom "(λx -> x) 42"    --> Ok ( "42", "Int" )
     evalFrom "(λx -> 3.14) 42" --> Ok ( "3.14", "Num" )
 
+    -- TODO: ^ * +
+
     -- Typed expression
     evalFrom "(x : a)"       --> Ok ( "x", "a" )
     evalFrom "(z : a)"       --> Ok ( "z", "a" ) -- defer evaluation
     evalFrom "λx -> 42"      --> Ok ( "λx -> 42", "a -> Int" )
     evalFrom "λx -> (y : a)" --> Ok ( "λx -> y", "b -> a" )
     evalFrom "(x : 42)"      --> Err (NotAType (Int 42))
+
+    -- TODO: |
 
     -- Type abstraction
     evalFrom "a -> b" -- Ok ( "a -> b", "Type" )
