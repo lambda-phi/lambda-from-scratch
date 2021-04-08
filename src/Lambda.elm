@@ -20,7 +20,6 @@ module Lambda exposing
     , newTypeVar
     , read
     , resolveType
-    , tupleMap
     , unify
     , withError
     , withResult
@@ -53,16 +52,16 @@ TODO: rename "Parser" to "Reader" and "Formatter" to "Writer" (?)
 type Expr
     = Int Int -- 42
     | Num Float -- 3.14
-      -- Core lambda calculus
     | Var String -- x
-    | Abs String Expr -- λx -> x
+    | Abs String Expr -- λx -> y
+      -- Binary operators
     | App Expr Expr -- f x
-    | TE Expr Type -- expr : Type
+    | Pow Expr Expr -- x ^ y
+    | Mul Expr Expr -- x * y
+    | Add Expr Expr -- x + y
+    | TE Expr Type -- x : a
+    | Or Expr Expr -- x | y
     | TAbs Type Type -- a -> b
-      -- Builtin operators
-    | Add Expr Expr -- a + b
-    | Mul Expr Expr -- a * b
-    | Pow Expr Expr -- a ^ b
       -- Error reporting
     | Pos String ( Int, Int ) ( Int, Int ) Expr -- filename start end expr
 
@@ -93,8 +92,8 @@ newEnv =
     { names =
         Dict.fromList
             [ ( "Type", ( Var "Type", Var "Type" ) )
-            , ( "Int", ( Var "Type", Var "Type" ) )
-            , ( "Num", ( Var "Type", Var "Type" ) )
+            , ( "Int", ( Var "Int", Var "Type" ) )
+            , ( "Num", ( Var "Num", Var "Type" ) )
             ]
     , equivalentTypes = DisjointSet.empty
     , typeNameSeed = 1
@@ -132,18 +131,23 @@ newEnv =
 
     -- Operator precedence
     read "x y z"      --> Ok (App (App (Var "x") (Var "y")) (Var "z"))
-    read "x (y z)"    --> Ok (App (Var "x") (App (Var "y") (Var "z")))
+    read "x y ^ z"    --> Ok (Pow (App (Var "x") (Var "y")) (Var "z"))
     read "x y * z"    --> Ok (Mul (App (Var "x") (Var "y")) (Var "z"))
-    read "x (y * z)"  --> Ok (App (Var "x") (Mul (Var "y") (Var "z")))
     read "x y + z"    --> Ok (Add (App (Var "x") (Var "y")) (Var "z"))
-    read "x (y + z)"  --> Ok (App (Var "x") (Add (Var "y") (Var "z")))
     read "x y : z"    --> Ok (TE (App (Var "x") (Var "y")) (Var "z"))
-    read "x (y : z)"  --> Ok (App (Var "x") (TE (Var "y") (Var "z")))
     read "x y -> z"   --> Ok (TAbs (App (Var "x") (Var "y")) (Var "z"))
-    read "x (y -> z)" --> Ok (App (Var "x") (TAbs (Var "y") (Var "z")))
     read "x λy -> z"  --> Ok (App (Var "x") (Abs "y" (Var "z")))
 
+    read "x ^ y z"     --> Ok (Pow (Var "x") (App (Var "y") (Var "z")))
+    read "x ^ y ^ z"   --> Ok (Pow (Var "x") (Pow (Var "y") (Var "z")))
+    read "x ^ y * z"   --> Ok (Mul (Pow (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y + z"   --> Ok (Add (Pow (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y : z"   --> Ok (TE (Pow (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y -> z"  --> Ok (TAbs (Pow (Var "x") (Var "y")) (Var "z"))
+    read "x ^ λy -> z" --> Ok (Pow (Var "x") (Abs "y" (Var "z")))
+
     read "x * y z"     --> Ok (Mul (Var "x") (App (Var "y") (Var "z")))
+    read "x * y ^ z"   --> Ok (Mul (Var "x") (Pow (Var "y") (Var "z")))
     read "x * y * z"   --> Ok (Mul (Mul (Var "x") (Var "y")) (Var "z"))
     read "x * y + z"   --> Ok (Add (Mul (Var "x") (Var "y")) (Var "z"))
     read "x * y : z"   --> Ok (TE (Mul (Var "x") (Var "y")) (Var "z"))
@@ -151,6 +155,7 @@ newEnv =
     read "x * λy -> z" --> Ok (Mul (Var "x") (Abs "y" (Var "z")))
 
     read "x + y z"     --> Ok (Add (Var "x") (App (Var "y") (Var "z")))
+    read "x + y ^ z"   --> Ok (Add (Var "x") (Pow (Var "y") (Var "z")))
     read "x + y * z"   --> Ok (Add (Var "x") (Mul (Var "y") (Var "z")))
     read "x + y + z"   --> Ok (Add (Add (Var "x") (Var "y")) (Var "z"))
     read "x + y : z"   --> Ok (TE (Add (Var "x") (Var "y")) (Var "z"))
@@ -158,6 +163,7 @@ newEnv =
     read "x + λy -> z" --> Ok (Add (Var "x") (Abs "y" (Var "z")))
 
     read "x : y z"     --> Ok (TE (Var "x") (App (Var "y") (Var "z")))
+    read "x : y ^ z"   --> Ok (TE (Var "x") (Pow (Var "y") (Var "z")))
     read "x : y * z"   --> Ok (TE (Var "x") (Mul (Var "y") (Var "z")))
     read "x : y + z"   --> Ok (TE (Var "x") (Add (Var "y") (Var "z")))
     read "x : y : z"   --> Ok (TE (TE (Var "x") (Var "y")) (Var "z"))
@@ -165,6 +171,7 @@ newEnv =
     read "x : λy -> z" --> Ok (TE (Var "x") (Abs "y" (Var "z")))
 
     read "x -> y z"     --> Ok (TAbs (Var "x") (App (Var "y") (Var "z")))
+    read "x -> y ^ z"   --> Ok (TAbs (Var "x") (Pow (Var "y") (Var "z")))
     read "x -> y * z"   --> Ok (TAbs (Var "x") (Mul (Var "y") (Var "z")))
     read "x -> y + z"   --> Ok (TAbs (Var "x") (Add (Var "y") (Var "z")))
     read "x -> y : z"   --> Ok (TAbs (Var "x") (TE (Var "y") (Var "z")))
@@ -172,6 +179,7 @@ newEnv =
     read "x -> λy -> z" --> Ok (TAbs (Var "x") (Abs "y" (Var "z")))
 
     read "λx -> y z"     --> Ok (Abs "x" (App (Var "y") (Var "z")))
+    read "λx -> y ^ z"   --> Ok (Abs "x" (Pow (Var "y") (Var "z")))
     read "λx -> y * z"   --> Ok (Abs "x" (Mul (Var "y") (Var "z")))
     read "λx -> y + z"   --> Ok (Abs "x" (Add (Var "y") (Var "z")))
     read "λx -> y : z"   --> Ok (Abs "x" (TE (Var "y") (Var "z")))
@@ -226,13 +234,23 @@ read txt =
 
     -- Operator precedence
     write (App (App (Var "x") (Var "y")) (Var "z"))  --> "x y z"
+    write (Pow (App (Var "x") (Var "y")) (Var "z"))  --> "x y ^ z"
     write (Mul (App (Var "x") (Var "y")) (Var "z"))  --> "x y * z"
     write (Add (App (Var "x") (Var "y")) (Var "z"))  --> "x y + z"
     write (TE (App (Var "x") (Var "y")) (Var "z"))   --> "x y : z"
     write (TAbs (App (Var "x") (Var "y")) (Var "z")) --> "x y -> z"
     write (App (Var "x") (Abs "y" (Var "z")))        --> "x (λy -> z)"
 
+    write (Pow (Var "x") (App (Var "y") (Var "z")))  --> "x ^ y z"
+    write (Pow (Var "x") (Pow (Var "y") (Var "z")))  --> "x ^ y ^ z"
+    write (Mul (Pow (Var "x") (Var "y")) (Var "z"))  --> "x ^ y * z"
+    write (Add (Pow (Var "x") (Var "y")) (Var "z"))  --> "x ^ y + z"
+    write (TE (Pow (Var "x") (Var "y")) (Var "z"))   --> "x ^ y : z"
+    write (TAbs (Pow (Var "x") (Var "y")) (Var "z")) --> "x ^ y -> z"
+    write (Pow (Var "x") (Abs "y" (Var "z")))        --> "x ^ (λy -> z)"
+
     write (Mul (Var "x") (App (Var "y") (Var "z")))  --> "x * y z"
+    write (Mul (Var "x") (Pow (Var "y") (Var "z")))  --> "x * y ^ z"
     write (Mul (Mul (Var "x") (Var "y")) (Var "z"))  --> "x * y * z"
     write (Add (Mul (Var "x") (Var "y")) (Var "z"))  --> "x * y + z"
     write (TE (Mul (Var "x") (Var "y")) (Var "z"))   --> "x * y : z"
@@ -240,6 +258,7 @@ read txt =
     write (Mul (Var "x") (Abs "y" (Var "z")))        --> "x * (λy -> z)"
 
     write (Add (Var "x") (App (Var "y") (Var "z")))  --> "x + y z"
+    write (Add (Var "x") (Pow (Var "y") (Var "z")))  --> "x + y ^ z"
     write (Add (Var "x") (Mul (Var "y") (Var "z")))  --> "x + y * z"
     write (Add (Add (Var "x") (Var "y")) (Var "z"))  --> "x + y + z"
     write (TE (Add (Var "x") (Var "y")) (Var "z"))   --> "x + y : z"
@@ -247,6 +266,7 @@ read txt =
     write (Add (Var "x") (Abs "y" (Var "z")))        --> "x + (λy -> z)"
 
     write (TE (Var "x") (App (Var "y") (Var "z")))  --> "x : y z"
+    write (TE (Var "x") (Pow (Var "y") (Var "z")))  --> "x : y ^ z"
     write (TE (Var "x") (Mul (Var "y") (Var "z")))  --> "x : y * z"
     write (TE (Var "x") (Add (Var "y") (Var "z")))  --> "x : y + z"
     write (TE (TE (Var "x") (Var "y")) (Var "z"))   --> "x : y : z"
@@ -254,6 +274,7 @@ read txt =
     write (TE (Var "x") (Abs "y" (Var "z")))        --> "x : (λy -> z)"
 
     write (TAbs (Var "x") (App (Var "y") (Var "z")))  --> "x -> y z"
+    write (TAbs (Var "x") (Pow (Var "y") (Var "z")))  --> "x -> y ^ z"
     write (TAbs (Var "x") (Mul (Var "y") (Var "z")))  --> "x -> y * z"
     write (TAbs (Var "x") (Add (Var "y") (Var "z")))  --> "x -> y + z"
     write (TAbs (Var "x") (TE (Var "y") (Var "z")))   --> "x -> y : z"
@@ -261,6 +282,7 @@ read txt =
     write (TAbs (Var "x") (Abs "y" (Var "z")))        --> "x -> (λy -> z)"
 
     write (Abs "x" (App (Var "y") (Var "z")))  --> "λx -> y z"
+    write (Abs "x" (Pow (Var "y") (Var "z")))  --> "λx -> y ^ z"
     write (Abs "x" (Mul (Var "y") (Var "z")))  --> "λx -> y * z"
     write (Abs "x" (Add (Var "y") (Var "z")))  --> "λx -> y + z"
     write (Abs "x" (TE (Var "y") (Var "z")))   --> "λx -> y : z"
@@ -321,20 +343,23 @@ write expr =
         App e1 e2 ->
             binopFromLeft e1 " " e2
 
-        TE e t ->
-            binopFromLeft e " : " t
-
-        TAbs t1 t2 ->
-            binopFromRight t1 " -> " t2
-
-        Add e1 e2 ->
-            binopFromLeft e1 " + " e2
+        Pow e1 e2 ->
+            binopFromRight e1 " ^ " e2
 
         Mul e1 e2 ->
             binopFromLeft e1 " * " e2
 
-        Pow e1 e2 ->
-            binopFromRight e1 " ^ " e2
+        Add e1 e2 ->
+            binopFromLeft e1 " + " e2
+
+        TE e t ->
+            binopFromLeft e " : " t
+
+        Or e1 e2 ->
+            binopFromLeft e1 " | " e2
+
+        TAbs t1 t2 ->
+            binopFromRight t1 " -> " t2
 
         Pos _ _ _ e ->
             write e
@@ -450,59 +475,61 @@ letVar name value expr =
 
 {-| Defines a new tagged union type.
 
-    -- @T = ; x -- syntax requires at least one constructor
-    Ok (letType "T" [] [] (Var "x"))
-    --> [ "T : Type = a"
-    --> , "x"
-    --> ] |> String.join ";" |> read
-
-    -- @T a b c = ; x -- syntax requires at least one constructor
-    Ok (letType "T" [ "a", "b", "c" ] [] (Var "x"))
-    --> [ "T : a -> b -> c -> Type = d"
-    --> , "x"
-    --> ] |> String.join ";" |> read
-
-    -- @T = A; x
-    Ok (letType "T" []
-            [ ( "A", Var "T" ) ]
+    -- @T = A; x -- syntax requires at least one constructor
+    Ok  (letType "T" []
+            ( "A", Var "T" )
+            []
             (Var "x")
         )
-    --> [ "T : Type = a -> a"
+    --> [ "T : Type = A"
     --> , "A : T = λa -> a"
     --> , "x"
     --> ] |> String.join ";" |> read
 
-    -- @T a = A a; x
-    Ok (letType "T" [ "a" ]
-            [ ( "A", TAbs (Var "a") (Var "T") ) ]
+    -- @T a b c = A; x
+    Ok  (letType "T" [ "a", "b", "c" ]
+            ( "A", App (App (App (Var "T") (Var "a")) (Var "b")) (Var "c") )
+            []
             (Var "x")
         )
-    --> [ "T : a -> Type = (a -> b) -> b"
-    --> , "A : a -> T = λc -> λb -> b c"
+    --> [ "T : a -> b -> c -> Type = A"
+    --> , "A : T a b c = λd -> d"
     --> , "x"
-    --> ] |> String.join "; " |> read
+    --> ] |> String.join ";" |> read
 
-    -- @Bool = True | False
-    Ok (letType "Bool" []
-            [ ( "True", Var "Bool" )
-            , ( "False", Var "Bool" )
+    -- @T a = A a; x
+    Ok  (letType "T" [ "a" ]
+            ( "A", TAbs (Var "a") (App (Var "T") (Var "a")) )
+            []
+            (Var "x")
+        )
+    --> [ "T : a -> Type = A"
+    --> , "A : a -> T a = λc -> λb -> b c"
+    --> , "x"
+    --> ] |> String.join ";" |> read
+
+    -- @T = A | B | C; x
+    Ok  (letType "T" []
+            ( "A", Var "T" )
+            [ ( "B", Var "T" )
+            , ( "C", Var "T" )
             ]
             (Var "x")
         )
-    --> [ "Bool : Type = a -> a -> a"
-    --> , "True : Bool = λa b -> a"
-    --> , "False : Bool = λa b -> b"
+    --> [ "T : Type = A | B | C"
+    --> , "A : T = λa b c -> a"
+    --> , "B : T = λa b c -> b"
+    --> , "C : T = λa b c -> c"
     --> , "x"
     --> ] |> String.join ";" |> read
 
     -- @Maybe a = Just a | Nothing; x
     Ok (letType "Maybe" [ "a" ]
-            [ ( "Just", TAbs (Var "a") (App (Var "Maybe") (Var "a")) )
-            , ( "Nothing", App (Var "Maybe") (Var "a") )
-            ]
+            ( "Just", TAbs (Var "a") (App (Var "Maybe") (Var "a")) )
+            [ ( "Nothing", App (Var "Maybe") (Var "a") ) ]
             (Var "x")
         )
-    --> [ "Maybe : a -> Type = (a -> b) -> b -> b"
+    --> [ "Maybe : a -> Type = Just | Nothing"
     --> , "Just : a -> Maybe a = λd -> λb c -> b d"
     --> , "Nothing : Maybe a = λb c -> c"
     --> , "x"
@@ -512,27 +539,25 @@ letVar name value expr =
     --      = a :: Vec n a : Vec (n + 1) a
     --      | [] : Vec 0 a; x
     Ok (letType "Vec" [ "Int", "a" ]
-            [ ( "Cons", TAbs (Var "a") (TAbs (App (App (Var "Vec") (Var "n")) (Var "a")) (App (App (Var "Vec") (Add (Var "n") (Int 1))) (Var "a"))) )
-            , ( "Nil", App (App (Var "Vec") (Int 0)) (Var "a") )
+            ( "Cons", TAbs (Var "a") (TAbs (App (App (Var "Vec") (Var "n")) (Var "a")) (App (App (Var "Vec") (Add (Var "n") (Int 1))) (Var "a"))) )
+            [ ( "Nil", App (App (Var "Vec") (Int 0)) (Var "a") )
             ]
             (Var "x")
         )
         |> Result.map write
-    --> [ "Vec : Int -> a -> Type = (a -> Vec n a -> b) -> b -> b"
+    --> [ "Vec : Int -> a -> Type = Cons | Nil"
     --> , "Cons : a -> Vec n a -> Vec (n + 1) a = λd e b c -> b d e"
     --> , "Nil : Vec 0 a = λb c -> c"
     --> , "x"
     --> ] |> String.join "; " |> Ok --read
 
 -}
-letType : String -> List String -> List ( String, Type ) -> Expr -> Expr
-letType name args ctors expr =
+letType : String -> List String -> ( String, Type ) -> List ( String, Type ) -> Expr -> Expr
+letType name args ctorHead ctorsTail expr =
     let
-        varName : String
-        varName =
-            Set.fromList args
-                |> newVarName 0
-                |> Tuple.first
+        ctors : List ( String, Type )
+        ctors =
+            ctorHead :: ctorsTail
 
         ctorInputTypes : List (List Type)
         ctorInputTypes =
@@ -542,8 +567,9 @@ letType name args ctors expr =
 
         def : Type
         def =
-            funcType (List.map (\xs -> funcType xs (Var varName)) ctorInputTypes)
-                (Var varName)
+            List.foldl (\y x -> Or x y)
+                (Var (Tuple.first ctorHead))
+                (List.map Var (List.map Tuple.first ctorsTail))
 
         typ : Type
         typ =
@@ -553,37 +579,27 @@ letType name args ctors expr =
         choices : List String
         choices =
             newVarNames (List.length ctors) 1 (Set.fromList args)
-
-        body =
-            List.foldr
-                (\( ( ctorName, ctorType ), ( choice, inputTypes ) ) ->
-                    let
-                        ctorInputs =
-                            newVarNames
-                                (List.length inputTypes)
-                                (List.length choices + 1)
-                                (Set.fromList (args ++ choices))
-
-                        ctorDef =
-                            func (ctorInputs ++ choices)
-                                (call (Var choice) (List.map Var ctorInputs))
-                    in
-                    letVar ctorName (TE ctorDef ctorType)
-                )
-                expr
-                (zip ctors (zip choices ctorInputTypes))
     in
-    letVar name (TE def typ) body
+    letVar name
+        (TE def typ)
+        (List.foldr
+            (\( ( ctorName, ctorType ), ( choice, inputTypes ) ) ->
+                let
+                    ctorInputs =
+                        newVarNames
+                            (List.length inputTypes)
+                            (List.length choices + 1)
+                            (Set.fromList (args ++ choices))
 
-
-zip : List a -> List b -> List ( a, b )
-zip list1 list2 =
-    case ( list1, list2 ) of
-        ( x :: xs, y :: ys ) ->
-            ( x, y ) :: zip xs ys
-
-        _ ->
-            []
+                    ctorDef =
+                        func (ctorInputs ++ choices)
+                            (call (Var choice) (List.map Var ctorInputs))
+                in
+                letVar ctorName (TE ctorDef ctorType)
+            )
+            expr
+            (zip ctors (zip choices ctorInputTypes))
+        )
 
 
 {-| Define a new variable in an `Env`.
@@ -800,20 +816,23 @@ eval expr env =
                                     env_
                     )
 
-        TE e t ->
-            map (Tuple.pair e) (resolveType t env)
-
-        TAbs t1 t2 ->
-            Debug.todo "eval TAbs"
-
-        Add e1 e2 ->
-            Debug.todo "eval Add"
+        Pow e1 e2 ->
+            Debug.todo "eval Pow"
 
         Mul e1 e2 ->
             Debug.todo "eval Mul"
 
-        Pow e1 e2 ->
-            Debug.todo "eval Pow"
+        Add e1 e2 ->
+            Debug.todo "eval Add"
+
+        TE e t ->
+            map (Tuple.pair e) (resolveType t env)
+
+        Or e1 e2 ->
+            Debug.todo "eval Or"
+
+        TAbs t1 t2 ->
+            Debug.todo "eval TAbs"
 
         Pos source start end e ->
             Debug.todo "eval Pos"
@@ -827,19 +846,34 @@ eval_ =
 
 {-| Resolves and validates a type expression.
 
+    import Dict
     import DisjointSet exposing (empty, union)
 
     envWithA : Env ()
     envWithA =
-        { newEnv | equivalentTypes = union (Var "a") (Var "b") empty }
+        { newEnv
+            | names = Dict.fromList
+                [ ( "Int", ( Var "Int", Var "Type" ) )
+                , ( "x", ( Int 42, Var "Int" ) )
+                ]
+            ,equivalentTypes = union (Var "a") (Var "b") empty
+        }
 
+    -- Defined names must be types.
+    resolveType (Var "Int") envWithA |> .result --> Ok (Var "Int")
+    resolveType (Var "x") envWithA |> .result   --> Err (NotAType (Var "x"))
+
+    -- Undefined names are type variables.
     resolveType (Var "a") newEnv |> .result   --> Ok (Var "a")
     resolveType (Var "a") envWithA |> .result --> Ok (Var "a")
     resolveType (Var "b") envWithA |> .result --> Ok (Var "a")
-    resolveType (Var "Int") newEnv |> .result --> Ok (Var "Int")
 
+    -- Type abstractions are also allowed.
     resolveType (TAbs (Var "b") (Var "Int")) envWithA |> .result
     --> Ok (TAbs (Var "a") (Var "Int"))
+
+    -- Other expressions are not types.
+    resolveType (Int 42) newEnv |> .result --> Err (NotAType (Int 42))
 
 -}
 resolveType : Type -> Env a -> Env Type
@@ -850,12 +884,15 @@ resolveType typ env =
                 ( Just t, _ ) ->
                     withValue t env
 
-                ( _, Just ( e, t ) ) ->
+                ( _, Just ( _, Var "Type" ) ) ->
                     withValue (Var x) env
 
-                _ ->
+                ( Nothing, Nothing ) ->
                     withValue (Var x)
                         { env | equivalentTypes = DisjointSet.add [ Var x ] env.equivalentTypes }
+
+                _ ->
+                    withError (NotAType typ) env
 
         TAbs type1 type2 ->
             map2 TAbs
@@ -1027,57 +1064,6 @@ andThen4 f env envAB envBC envCD =
     andThen (\x envA -> andThen3 (f x) (envAB envA) envBC envCD) env
 
 
-apply :
-    (b -> Env b -> Env c)
-    -> (Env a -> Env b)
-    -> Env a
-    -> Env c
-apply f envAB envA =
-    let
-        envB =
-            envAB envA
-    in
-    case envB.result of
-        Ok x ->
-            f x envB
-
-        Err err ->
-            withError err envA
-
-
-apply2 :
-    (b -> c -> Env c -> Env d)
-    -> (Env a -> Env b)
-    -> (Env b -> Env c)
-    -> Env a
-    -> Env d
-apply2 f envAB envBC envA =
-    apply (\x -> apply (f x) envBC) envAB envA
-
-
-apply3 :
-    (b -> c -> d -> Env d -> Env e)
-    -> (Env a -> Env b)
-    -> (Env b -> Env c)
-    -> (Env c -> Env d)
-    -> Env a
-    -> Env e
-apply3 f envAB envBC envCD envA =
-    apply (\x -> apply2 (f x) envBC envCD) envAB envA
-
-
-apply4 :
-    (b -> c -> d -> e -> Env e -> Env f)
-    -> (Env a -> Env b)
-    -> (Env b -> Env c)
-    -> (Env c -> Env d)
-    -> (Env d -> Env e)
-    -> Env a
-    -> Env f
-apply4 f envAB envBC envCD envDE envA =
-    apply (\x -> apply3 (f x) envBC envCD envDE) envAB envA
-
-
 withResult : Result Error b -> Env a -> Env b
 withResult result env =
     { names = env.names
@@ -1099,6 +1085,16 @@ withError err env =
 
 
 -- Utility functions
+
+
+zip : List a -> List b -> List ( a, b )
+zip list1 list2 =
+    case ( list1, list2 ) of
+        ( x :: xs, y :: ys ) ->
+            ( x, y ) :: zip xs ys
+
+        _ ->
+            []
 
 
 tupleMap : (a -> b -> c) -> ( a, b ) -> c
@@ -1240,10 +1236,11 @@ exprP =
     in
     Parser.Expression.expression
         [ [ fromLeft App spaces ]
-        , [ fromLeft Pow (char '^') ]
+        , [ fromRight Pow (char '^') ]
         , [ fromLeft Mul (char '*') ]
         , [ fromLeft Add (char '+') ]
         , [ fromLeft TE (char ':') ]
+        , [ fromLeft Or (char '|') ]
         , [ fromRight TAbs (text "->") ]
         , [ inbetween identity (char '(') (char ')')
           , term identity funcP
@@ -1273,18 +1270,21 @@ precedence expr =
             100
 
         App _ _ ->
-            6
+            7
 
         Pow _ _ ->
-            5
+            6
 
         Mul _ _ ->
-            4
+            5
 
         Add _ _ ->
-            3
+            4
 
         TE _ _ ->
+            3
+
+        Or _ _ ->
             2
 
         TAbs _ _ ->
