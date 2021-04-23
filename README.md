@@ -24,7 +24,7 @@ readWrite "3.14" --> Ok "3.14"
 -- Variables
 readWrite "x" --> Ok "x"
 
--- Abstraction
+-- Lambda abstraction
 readWrite "λx -> y"       --> Ok "λx -> y"
 readWrite "λx y -> z"     --> Ok "λx y -> z"
 readWrite "λx -> λy -> z" --> Ok "λx y -> z"
@@ -33,12 +33,12 @@ readWrite "λx -> λy -> z" --> Ok "λx y -> z"
 readWrite "f x"   --> Ok "f x"
 readWrite "f x y" --> Ok "f x y"
 
--- Typed expression
+-- Typed expressions
 readWrite "x : a"       --> Ok "x : a"
 readWrite "x : Bool"    --> Ok "x : Bool"
 readWrite "x : Maybe a" --> Ok "x : Maybe a"
 
--- Type abstraction
+-- Function types
 readWrite "a -> b" --> Ok "a -> b"
 
 -- Variable definitions
