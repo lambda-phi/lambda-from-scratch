@@ -3,6 +3,7 @@ module Lambda exposing
     , Error(..)
     , Expr(..)
     , Type
+    , add
     , andThen
     , andThen2
     , andThen3
@@ -15,10 +16,12 @@ module Lambda exposing
     , defineType
     , eval
     , evalType
+    , exp
     , func
     , funcType
     , letVar
     , map
+    , mul
     , newEnv
     , newTypeVar
     , read
@@ -33,11 +36,78 @@ module Lambda exposing
 
 TODO: validate that this Elm issue works: <https://github.com/elm/compiler/issues/2186>
 
+Practical Implementation of a Dependently Typed Functional Programming Language:
+<https://eb.host.cs.st-andrews.ac.uk/writings/thesis.pdf>
+
+
+## Type Theory expressions
+
+    type t
+        = *i               -- type universes
+        | x                -- variable
+        | c                -- constructor
+        | ∀x:t. t          -- function space
+        | λx:t. t          -- abstraction
+        | t t              -- application
+        | let x:t = t in t -- let binding
+
+
+## Contractions
+
+β−contraction: substitutes a value applied to a λ-binding for the bound variable
+in the scope of that binding.
+Γ ⊢ (λx:S. t) s ⇒ let x:S = s in t
+
+η-contraction: eliminates redundant λ abstractions
+Γ ⊢ λx:S. f x ⇒ f
+
+δ-contraction: replaces a let bound variable by its value
+Γ{x:S = s} ⊢ x ⇒ s
+
+
+## Type checking
+
+Notation (modified): <https://en.wikipedia.org/wiki/Type_rule>
+
+    Type
+        if   Γ ⊢ valid
+        then Γ ⊢ *n : *n+1
+
+    Var
+        if   Γ{x:S} ⊢ valid
+        then Γ{x:S} ⊢ x : S
+
+    Val
+        if   Γ{x:S = s} ⊢ valid
+        then Γ{x:S = s} ⊢ x : S
+
+    App
+        if   Γ ⊢ f : (∀x:S. T)
+             Γ ⊢ s : S
+        then Γ ⊢ f s : (let x:S = s in T)
+
+    Lam
+        if   Γ{x:S} ⊢ e : T
+             Γ ⊢ (∀x:S. T) : *n
+        then Γ ⊢ (λx:S. e) : (∀x:S. T)
+
+    ForAll
+        if   Γ{x:S} ⊢ T : *n
+             Γ ⊢ S : *n
+        then Γ ⊢ ∀x:S. T : *n
+
+    Let
+        if   Γ ⊢ e1 : S
+             Γ{x:S = e1} ⊢ e2 : T
+             Γ ⊢ S : *n
+             Γ{x:S = e1} ⊢ T : *n
+        then Γ ⊢ let x:S = e1 in e2 : (let x:S = e1 in T)
+
 -}
 
 import Dict exposing (Dict)
-import DisjointSet exposing (DisjointSet, union)
-import Parser exposing (Parser, andThen, drop, lazy, oneOf, parse, succeed, take, textOf)
+import DisjointSet exposing (DisjointSet)
+import Parser exposing (Parser, andThen, drop, lazy, oneOf, parse, succeed, take)
 import Parser.Char exposing (char, digit, letter)
 import Parser.Common exposing (int, number, spaces, text)
 import Parser.Expression exposing (fromLeft, fromRight, inbetween, term)
@@ -45,7 +115,7 @@ import Parser.Sequence exposing (concat, exactly, oneOrMore, zeroOrMore)
 import Set exposing (Set)
 
 
-{-| A Lambda calculus expression.
+{-| A Lambda calculus Expression.
 
 TODO: figure out how to have a "Formatter" type to write, like "Parser" to read
 TODO: rename "Parser" to "Reader" and "Formatter" to "Writer" (?)
@@ -57,22 +127,17 @@ type Expr
     | Num Float -- 3.14
     | Var String -- x
     | Lam String Expr -- λx -> y
-    | FAl String Type -- ∀a. b
-      -- Binary operators
+    | FrA String Type -- ∀a. b
     | App Expr Expr -- f x
-    | Exp Expr Expr -- x ^ y
-    | Mul Expr Expr -- x * y
-    | Add Expr Expr -- x + y
     | Fnc Type Type -- a -> b
     | TE Expr Type -- x : a
-    | Or Expr Expr -- x | y
       -- Error reporting
-    | Pos String ( Int, Int ) ( Int, Int ) Expr -- filename start end expr
+    | Pos String ( Int, Int ) ( Int, Int ) Expr -- filename start end Expr
 
 
-{-| Types are just expressions, and any valid expression is a valid type.
+{-| Types are just Expressions, and any valid Expression is a valid type.
 
-This is just a name alias to document better when we're expecting any expression or specifically a type.
+This is just a name alias to document better when we're expecting any Expression or specifically a type.
 
 -}
 type alias Type =
@@ -109,7 +174,7 @@ newEnv =
     }
 
 
-{-| Reads a Lambda expression.
+{-| Reads a Lambda Expression.
 
     import Lambda exposing (Expr(..), read)
 
@@ -129,7 +194,7 @@ newEnv =
 
     -- TODO: ^ * +
 
-    -- Typed expression
+    -- Typed Expression
     read "x : a" --> Ok (TE (Var "x") (Var "a"))
 
     -- TODO: |
@@ -143,63 +208,63 @@ newEnv =
 
     -- Operator precedence
     read "x y z"      --> Ok (App (App (Var "x") (Var "y")) (Var "z"))
-    read "x y ^ z"    --> Ok (Exp (App (Var "x") (Var "y")) (Var "z"))
-    read "x y * z"    --> Ok (Mul (App (Var "x") (Var "y")) (Var "z"))
-    read "x y + z"    --> Ok (Add (App (Var "x") (Var "y")) (Var "z"))
+    read "x y ^ z"    --> Ok (exp (App (Var "x") (Var "y")) (Var "z"))
+    read "x y * z"    --> Ok (mul (App (Var "x") (Var "y")) (Var "z"))
+    read "x y + z"    --> Ok (add (App (Var "x") (Var "y")) (Var "z"))
     read "x y -> z"   --> Ok (Fnc (App (Var "x") (Var "y")) (Var "z"))
     read "x y : z"    --> Ok (TE (App (Var "x") (Var "y")) (Var "z"))
     read "x λy -> z"  --> Ok (App (Var "x") (Lam "y" (Var "z")))
 
-    read "x ^ y z"     --> Ok (Exp (Var "x") (App (Var "y") (Var "z")))
-    read "x ^ y ^ z"   --> Ok (Exp (Var "x") (Exp (Var "y") (Var "z")))
-    read "x ^ y * z"   --> Ok (Mul (Exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ y + z"   --> Ok (Add (Exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ y -> z"  --> Ok (Fnc (Exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ y : z"   --> Ok (TE (Exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ λy -> z" --> Ok (Exp (Var "x") (Lam "y" (Var "z")))
+    read "x ^ y z"     --> Ok (exp (Var "x") (App (Var "y") (Var "z")))
+    read "x ^ y ^ z"   --> Ok (exp (Var "x") (exp (Var "y") (Var "z")))
+    read "x ^ y * z"   --> Ok (mul (exp (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y + z"   --> Ok (add (exp (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y -> z"  --> Ok (Fnc (exp (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y : z"   --> Ok (TE (exp (Var "x") (Var "y")) (Var "z"))
+    read "x ^ λy -> z" --> Ok (exp (Var "x") (Lam "y" (Var "z")))
 
-    read "x * y z"     --> Ok (Mul (Var "x") (App (Var "y") (Var "z")))
-    read "x * y ^ z"   --> Ok (Mul (Var "x") (Exp (Var "y") (Var "z")))
-    read "x * y * z"   --> Ok (Mul (Mul (Var "x") (Var "y")) (Var "z"))
-    read "x * y + z"   --> Ok (Add (Mul (Var "x") (Var "y")) (Var "z"))
-    read "x * y : z"   --> Ok (TE (Mul (Var "x") (Var "y")) (Var "z"))
-    read "x * y -> z"  --> Ok (Fnc (Mul (Var "x") (Var "y")) (Var "z"))
-    read "x * λy -> z" --> Ok (Mul (Var "x") (Lam "y" (Var "z")))
+    read "x * y z"     --> Ok (mul (Var "x") (App (Var "y") (Var "z")))
+    read "x * y ^ z"   --> Ok (mul (Var "x") (exp (Var "y") (Var "z")))
+    read "x * y * z"   --> Ok (mul (mul (Var "x") (Var "y")) (Var "z"))
+    read "x * y + z"   --> Ok (add (mul (Var "x") (Var "y")) (Var "z"))
+    read "x * y : z"   --> Ok (TE (mul (Var "x") (Var "y")) (Var "z"))
+    read "x * y -> z"  --> Ok (Fnc (mul (Var "x") (Var "y")) (Var "z"))
+    read "x * λy -> z" --> Ok (mul (Var "x") (Lam "y" (Var "z")))
 
-    read "x + y z"     --> Ok (Add (Var "x") (App (Var "y") (Var "z")))
-    read "x + y ^ z"   --> Ok (Add (Var "x") (Exp (Var "y") (Var "z")))
-    read "x + y * z"   --> Ok (Add (Var "x") (Mul (Var "y") (Var "z")))
-    read "x + y + z"   --> Ok (Add (Add (Var "x") (Var "y")) (Var "z"))
-    read "x + y -> z"  --> Ok (Fnc (Add (Var "x") (Var "y")) (Var "z"))
-    read "x + y : z"   --> Ok (TE (Add (Var "x") (Var "y")) (Var "z"))
-    read "x + λy -> z" --> Ok (Add (Var "x") (Lam "y" (Var "z")))
+    read "x + y z"     --> Ok (add (Var "x") (App (Var "y") (Var "z")))
+    read "x + y ^ z"   --> Ok (add (Var "x") (exp (Var "y") (Var "z")))
+    read "x + y * z"   --> Ok (add (Var "x") (mul (Var "y") (Var "z")))
+    read "x + y + z"   --> Ok (add (add (Var "x") (Var "y")) (Var "z"))
+    read "x + y -> z"  --> Ok (Fnc (add (Var "x") (Var "y")) (Var "z"))
+    read "x + y : z"   --> Ok (TE (add (Var "x") (Var "y")) (Var "z"))
+    read "x + λy -> z" --> Ok (add (Var "x") (Lam "y" (Var "z")))
 
     read "x -> y z"     --> Ok (Fnc (Var "x") (App (Var "y") (Var "z")))
-    read "x -> y ^ z"   --> Ok (Fnc (Var "x") (Exp (Var "y") (Var "z")))
-    read "x -> y * z"   --> Ok (Fnc (Var "x") (Mul (Var "y") (Var "z")))
-    read "x -> y + z"   --> Ok (Fnc (Var "x") (Add (Var "y") (Var "z")))
+    read "x -> y ^ z"   --> Ok (Fnc (Var "x") (exp (Var "y") (Var "z")))
+    read "x -> y * z"   --> Ok (Fnc (Var "x") (mul (Var "y") (Var "z")))
+    read "x -> y + z"   --> Ok (Fnc (Var "x") (add (Var "y") (Var "z")))
     read "x -> y : z"   --> Ok (TE (Fnc (Var "x") (Var "y")) (Var "z"))
     read "x -> y -> z"  --> Ok (Fnc (Var "x") (Fnc (Var "y") (Var "z")))
     read "x -> λy -> z" --> Ok (Fnc (Var "x") (Lam "y" (Var "z")))
 
     read "x : y z"     --> Ok (TE (Var "x") (App (Var "y") (Var "z")))
-    read "x : y ^ z"   --> Ok (TE (Var "x") (Exp (Var "y") (Var "z")))
-    read "x : y * z"   --> Ok (TE (Var "x") (Mul (Var "y") (Var "z")))
-    read "x : y + z"   --> Ok (TE (Var "x") (Add (Var "y") (Var "z")))
+    read "x : y ^ z"   --> Ok (TE (Var "x") (exp (Var "y") (Var "z")))
+    read "x : y * z"   --> Ok (TE (Var "x") (mul (Var "y") (Var "z")))
+    read "x : y + z"   --> Ok (TE (Var "x") (add (Var "y") (Var "z")))
     read "x : y -> z"  --> Ok (TE (Var "x") (Fnc (Var "y") (Var "z")))
     read "x : y : z"   --> Ok (TE (TE (Var "x") (Var "y")) (Var "z"))
     read "x : λy -> z" --> Ok (TE (Var "x") (Lam "y" (Var "z")))
 
     read "λx -> y z"     --> Ok (Lam "x" (App (Var "y") (Var "z")))
-    read "λx -> y ^ z"   --> Ok (Lam "x" (Exp (Var "y") (Var "z")))
-    read "λx -> y * z"   --> Ok (Lam "x" (Mul (Var "y") (Var "z")))
-    read "λx -> y + z"   --> Ok (Lam "x" (Add (Var "y") (Var "z")))
+    read "λx -> y ^ z"   --> Ok (Lam "x" (exp (Var "y") (Var "z")))
+    read "λx -> y * z"   --> Ok (Lam "x" (mul (Var "y") (Var "z")))
+    read "λx -> y + z"   --> Ok (Lam "x" (add (Var "y") (Var "z")))
     read "λx -> y -> z"  --> Ok (Lam "x" (Fnc (Var "y") (Var "z")))
     read "λx -> y : z"   --> Ok (Lam "x" (TE (Var "y") (Var "z")))
     read "λx -> λy -> z" --> Ok (Lam "x" (Lam "y" (Var "z")))
 
-    read "x + (y + z)" --> Ok (Add (Var "x") (Add (Var "y") (Var "z")))
-    read "(x ^ y) ^ z" --> Ok (Exp (Exp (Var "x") (Var "y")) (Var "z"))
+    read "x + (y + z)" --> Ok (add (Var "x") (add (Var "y") (Var "z")))
+    read "(x ^ y) ^ z" --> Ok (exp (exp (Var "x") (Var "y")) (Var "z"))
 
 -}
 read : String -> Result Error Expr
@@ -208,7 +273,7 @@ read txt =
         |> Result.mapError SyntaxError
 
 
-{-| Writes a Lambda expression.
+{-| Writes a Lambda Expression.
 
     import Lambda exposing (Expr(..), write)
 
@@ -227,7 +292,7 @@ read txt =
 
     -- TODO: ^ * +
 
-    -- Typed expression
+    -- Typed Expression
     write (TE (Var "x") (Var "a")) --> "x : a"
 
     -- TODO: |
@@ -241,91 +306,84 @@ read txt =
 
     -- Operator precedence
     write (App (App (Var "x") (Var "y")) (Var "z"))  --> "x y z"
-    write (Exp (App (Var "x") (Var "y")) (Var "z"))  --> "x y ^ z"
-    write (Mul (App (Var "x") (Var "y")) (Var "z"))  --> "x y * z"
-    write (Add (App (Var "x") (Var "y")) (Var "z"))  --> "x y + z"
+    write (exp (App (Var "x") (Var "y")) (Var "z"))  --> "x y ^ z"
+    write (mul (App (Var "x") (Var "y")) (Var "z"))  --> "x y * z"
+    write (add (App (Var "x") (Var "y")) (Var "z"))  --> "x y + z"
     write (Fnc (App (Var "x") (Var "y")) (Var "z")) --> "x y -> z"
     write (TE (App (Var "x") (Var "y")) (Var "z"))   --> "x y : z"
     write (App (Var "x") (Lam "y" (Var "z")))        --> "x (λy -> z)"
 
-    write (Exp (Var "x") (App (Var "y") (Var "z")))  --> "x ^ y z"
-    write (Exp (Var "x") (Exp (Var "y") (Var "z")))  --> "x ^ y ^ z"
-    write (Mul (Exp (Var "x") (Var "y")) (Var "z"))  --> "x ^ y * z"
-    write (Add (Exp (Var "x") (Var "y")) (Var "z"))  --> "x ^ y + z"
-    write (Fnc (Exp (Var "x") (Var "y")) (Var "z")) --> "x ^ y -> z"
-    write (TE (Exp (Var "x") (Var "y")) (Var "z"))   --> "x ^ y : z"
-    write (Exp (Var "x") (Lam "y" (Var "z")))        --> "x ^ (λy -> z)"
+    write (exp (Var "x") (App (Var "y") (Var "z")))  --> "x ^ y z"
+    write (exp (Var "x") (exp (Var "y") (Var "z")))  --> "x ^ y ^ z"
+    write (mul (exp (Var "x") (Var "y")) (Var "z"))  --> "x ^ y * z"
+    write (add (exp (Var "x") (Var "y")) (Var "z"))  --> "x ^ y + z"
+    write (Fnc (exp (Var "x") (Var "y")) (Var "z")) --> "x ^ y -> z"
+    write (TE (exp (Var "x") (Var "y")) (Var "z"))   --> "x ^ y : z"
+    write (exp (Var "x") (Lam "y" (Var "z")))        --> "x ^ (λy -> z)"
 
-    write (Mul (Var "x") (App (Var "y") (Var "z")))  --> "x * y z"
-    write (Mul (Var "x") (Exp (Var "y") (Var "z")))  --> "x * y ^ z"
-    write (Mul (Mul (Var "x") (Var "y")) (Var "z"))  --> "x * y * z"
-    write (Add (Mul (Var "x") (Var "y")) (Var "z"))  --> "x * y + z"
-    write (Fnc (Mul (Var "x") (Var "y")) (Var "z")) --> "x * y -> z"
-    write (TE (Mul (Var "x") (Var "y")) (Var "z"))   --> "x * y : z"
-    write (Mul (Var "x") (Lam "y" (Var "z")))        --> "x * (λy -> z)"
+    write (mul (Var "x") (App (Var "y") (Var "z")))  --> "x * y z"
+    write (mul (Var "x") (exp (Var "y") (Var "z")))  --> "x * y ^ z"
+    write (mul (mul (Var "x") (Var "y")) (Var "z"))  --> "x * y * z"
+    write (add (mul (Var "x") (Var "y")) (Var "z"))  --> "x * y + z"
+    write (Fnc (mul (Var "x") (Var "y")) (Var "z")) --> "x * y -> z"
+    write (TE (mul (Var "x") (Var "y")) (Var "z"))   --> "x * y : z"
+    write (mul (Var "x") (Lam "y" (Var "z")))        --> "x * (λy -> z)"
 
-    write (Add (Var "x") (App (Var "y") (Var "z")))  --> "x + y z"
-    write (Add (Var "x") (Exp (Var "y") (Var "z")))  --> "x + y ^ z"
-    write (Add (Var "x") (Mul (Var "y") (Var "z")))  --> "x + y * z"
-    write (Add (Add (Var "x") (Var "y")) (Var "z"))  --> "x + y + z"
-    write (Fnc (Add (Var "x") (Var "y")) (Var "z")) --> "x + y -> z"
-    write (TE (Add (Var "x") (Var "y")) (Var "z"))   --> "x + y : z"
-    write (Add (Var "x") (Lam "y" (Var "z")))        --> "x + (λy -> z)"
+    write (add (Var "x") (App (Var "y") (Var "z")))  --> "x + y z"
+    write (add (Var "x") (exp (Var "y") (Var "z")))  --> "x + y ^ z"
+    write (add (Var "x") (mul (Var "y") (Var "z")))  --> "x + y * z"
+    write (add (add (Var "x") (Var "y")) (Var "z"))  --> "x + y + z"
+    write (Fnc (add (Var "x") (Var "y")) (Var "z")) --> "x + y -> z"
+    write (TE (add (Var "x") (Var "y")) (Var "z"))   --> "x + y : z"
+    write (add (Var "x") (Lam "y" (Var "z")))        --> "x + (λy -> z)"
 
     write (Fnc (Var "x") (App (Var "y") (Var "z")))  --> "x -> y z"
-    write (Fnc (Var "x") (Exp (Var "y") (Var "z")))  --> "x -> y ^ z"
-    write (Fnc (Var "x") (Mul (Var "y") (Var "z")))  --> "x -> y * z"
-    write (Fnc (Var "x") (Add (Var "y") (Var "z")))  --> "x -> y + z"
+    write (Fnc (Var "x") (exp (Var "y") (Var "z")))  --> "x -> y ^ z"
+    write (Fnc (Var "x") (mul (Var "y") (Var "z")))  --> "x -> y * z"
+    write (Fnc (Var "x") (add (Var "y") (Var "z")))  --> "x -> y + z"
     write (Fnc (Var "x") (Fnc (Var "y") (Var "z"))) --> "x -> y -> z"
     write (TE (Fnc (Var "x") (Var "y")) (Var "z"))   --> "x -> y : z"
     write (Fnc (Var "x") (Lam "y" (Var "z")))        --> "x -> (λy -> z)"
 
     write (TE (Var "x") (App (Var "y") (Var "z")))  --> "x : y z"
-    write (TE (Var "x") (Exp (Var "y") (Var "z")))  --> "x : y ^ z"
-    write (TE (Var "x") (Mul (Var "y") (Var "z")))  --> "x : y * z"
-    write (TE (Var "x") (Add (Var "y") (Var "z")))  --> "x : y + z"
+    write (TE (Var "x") (exp (Var "y") (Var "z")))  --> "x : y ^ z"
+    write (TE (Var "x") (mul (Var "y") (Var "z")))  --> "x : y * z"
+    write (TE (Var "x") (add (Var "y") (Var "z")))  --> "x : y + z"
     write (TE (Var "x") (Fnc (Var "y") (Var "z"))) --> "x : y -> z"
     write (TE (TE (Var "x") (Var "y")) (Var "z"))   --> "x : y : z"
     write (TE (Var "x") (Lam "y" (Var "z")))        --> "x : (λy -> z)"
 
     write (Lam "x" (App (Var "y") (Var "z")))  --> "λx -> y z"
-    write (Lam "x" (Exp (Var "y") (Var "z")))  --> "λx -> y ^ z"
-    write (Lam "x" (Mul (Var "y") (Var "z")))  --> "λx -> y * z"
-    write (Lam "x" (Add (Var "y") (Var "z")))  --> "λx -> y + z"
+    write (Lam "x" (exp (Var "y") (Var "z")))  --> "λx -> y ^ z"
+    write (Lam "x" (mul (Var "y") (Var "z")))  --> "λx -> y * z"
+    write (Lam "x" (add (Var "y") (Var "z")))  --> "λx -> y + z"
     write (Lam "x" (TE (Var "y") (Var "z")))   --> "λx -> y : z"
     write (Lam "x" (Fnc (Var "y") (Var "z"))) --> "λx -> y -> z"
     write (Lam "x" (Lam "y" (Var "z")))        --> "λx y -> z"
 
-    write (Add (Var "x") (Add (Var "y") (Var "z"))) --> "x + (y + z)"
-    write (Exp (Exp (Var "x") (Var "y")) (Var "z")) --> "(x ^ y) ^ z"
+    TODO: fix this!
+    write (add (Var "x") (add (Var "y") (Var "z"))) -- "x + (y + z)"
+    write (exp (exp (Var "x") (Var "y")) (Var "z")) -- "(x ^ y) ^ z"
 
 -}
 write : Expr -> String
 write expr =
     let
-        unop1 : Expr -> String
-        unop1 e =
-            if precedence e < precedence expr then
+        unop1 : Expr -> Expr -> String
+        unop1 op e =
+            if precedence e < precedence op then
                 "(" ++ write e ++ ")"
 
             else
                 write e
 
-        unop2 : Expr -> String
-        unop2 e =
-            if precedence e <= precedence expr then
+        unop2 : Expr -> Expr -> String
+        unop2 op e =
+            if precedence e <= precedence op then
                 "(" ++ write e ++ ")"
 
             else
                 write e
-
-        binopFromLeft : Expr -> String -> Expr -> String
-        binopFromLeft e1 op e2 =
-            unop1 e1 ++ op ++ unop2 e2
-
-        binopFromRight : Expr -> String -> Expr -> String
-        binopFromRight e1 op e2 =
-            unop2 e1 ++ op ++ unop1 e2
     in
     case expr of
         Typ [] ->
@@ -344,11 +402,11 @@ write expr =
             x
 
         Lam _ _ ->
-            tupleMap (\xs y -> "λ" ++ String.join " " xs ++ " -> " ++ unop1 y)
+            tupleMap (\xs y -> "λ" ++ String.join " " xs ++ " -> " ++ write y)
                 (asFunc expr)
 
-        FAl _ _ ->
-            Debug.todo "write FAl"
+        FrA _ _ ->
+            Debug.todo "write FrA"
 
         App (Lam x e) (TE v t) ->
             x ++ " : " ++ write t ++ " = " ++ write v ++ "; " ++ write e
@@ -356,26 +414,23 @@ write expr =
         App (Lam x e) v ->
             x ++ " := " ++ write v ++ "; " ++ write e
 
+        App ((App (Var "^") e1) as op) e2 ->
+            unop2 op e1 ++ " ^ " ++ unop1 op e2
+
+        App ((App (Var "*") e1) as op) e2 ->
+            unop1 op e1 ++ " * " ++ unop2 op e2
+
+        App ((App (Var "+") e1) as op) e2 ->
+            unop1 op e1 ++ " + " ++ unop2 op e2
+
         App e1 e2 ->
-            binopFromLeft e1 " " e2
-
-        Exp e1 e2 ->
-            binopFromRight e1 " ^ " e2
-
-        Mul e1 e2 ->
-            binopFromLeft e1 " * " e2
-
-        Add e1 e2 ->
-            binopFromLeft e1 " + " e2
+            unop1 expr e1 ++ " " ++ unop2 expr e2
 
         TE e t ->
-            binopFromLeft e " : " t
-
-        Or e1 e2 ->
-            binopFromLeft e1 " | " e2
+            unop1 expr e ++ " : " ++ unop2 expr t
 
         Fnc t1 t2 ->
-            binopFromRight t1 " -> " t2
+            unop2 expr t1 ++ " -> " ++ unop1 expr t2
 
         Pos _ _ _ e ->
             write e
@@ -499,6 +554,21 @@ asCall expr =
     asCall_ expr []
 
 
+exp : Expr -> Expr -> Expr
+exp x y =
+    call (Var "^") [ x, y ]
+
+
+mul : Expr -> Expr -> Expr
+mul x y =
+    call (Var "*") [ x, y ]
+
+
+add : Expr -> Expr -> Expr
+add x y =
+    call (Var "+") [ x, y ]
+
+
 {-|
 
     import Lambda
@@ -516,9 +586,8 @@ letVar name value expr =
 asConstructors : Expr -> Type -> List ( String, Type )
 asConstructors expr typ =
     case asCall expr of
-        ( Or x1 x2, [] ) ->
-            asConstructors x1 typ ++ asConstructors x2 typ
-
+        -- ( Or x1 x2, [] ) ->
+        --     asConstructors x1 typ ++ asConstructors x2 typ
         ( TE x t, [] ) ->
             asConstructors x t
 
@@ -533,7 +602,7 @@ asConstructors expr typ =
 
     import Dict
 
-    -- We evaluate the expression to get its type.
+    -- We evaluate the Expression to get its type.
     define "x" (Int 42) newEnv |> .names
     --> Dict.insert "x" (Int 42, Var "Int") newEnv.names
 
@@ -541,9 +610,9 @@ asConstructors expr typ =
     define "x" (Var "y") newEnv
     --> newEnv |> withError (VariableNotFound (Var "y"))
 
-    -- Note that we already know the type of a typed expression,
+    -- Note that we already know the type of a typed Expression,
     -- so we can defer its actual evaluation until it's used.
-    -- This allows to define recursive functions and other expressions
+    -- This allows to define recursive functions and other Expressions
     -- that depend on variables that haven't been defined yet.
     define "x" (TE (Var "y") (Var "Int")) newEnv |> .names
     --> Dict.insert "x" (Var "y", Var "Int") newEnv.names
@@ -632,7 +701,7 @@ define_ =
         |> defineType ( "Vec", [ Var "Int", Var "a" ] )
             [ ( "Cons"
                 , [ Var "a", call (Var "Vec") [ Var "n", Var "a" ] ]
-                , call (Var "Vec") [ Add (Var "n") (Int 1), Var "a" ]
+                , call (Var "Vec") [ add (Var "n") (Int 1), Var "a" ]
                 )
             , ( "Nil", [], call (Var "Vec") [ Int 0, Var "a" ] )
             ]
@@ -661,13 +730,13 @@ defineType ( typeName, typeInputs ) constructors env =
 {-| Creates a new type variable with a unique name.
 
     import Dict
-    import DisjointSet exposing (add, empty)
+    import DisjointSet
 
     -- Starts with "a".
     newTypeVar newEnv |> .result --> Ok (TE (Var "a") (Var "Type"))
 
     -- Goes alphabetically if a type is already defined.
-    newTypeVar { newEnv | types = add [ Var "a" ] empty } |> .result --> Ok (TE (Var "b") (Var "Type"))
+    newTypeVar { newEnv | types = DisjointSet.add [ Var "a" ] DisjointSet.empty } |> .result --> Ok (TE (Var "b") (Var "Type"))
     newTypeVar { newEnv | names = Dict.singleton "a" (Var "Type", Var "Type") } |> .result --> Ok (TE (Var "b") (Var "Type"))
 
     -- Names can have multiple letters when a-z are all used up.
@@ -698,7 +767,7 @@ newTypeVar env =
             )
 
 
-{-| Evaluates an expression.
+{-| Evaluates an Expression.
 
     import Lambda
 
@@ -730,7 +799,7 @@ newTypeVar env =
     evalText "g" --> Ok ( "g", "(a : Type) -> (a : Type)" )
     evalText "h" --> Err (VariableNotFound (Var "h"))
 
-    -- Lamtraction
+    -- Lambda abstraction
     evalText "λx -> x" --> Ok ( "λx -> x", "(a : Type) -> (a : Type)" )
     evalText "λx -> y" --> Ok ( "λx -> y", "(a : Type) -> Num" )
     evalText "λy -> x" --> Ok ( "λy -> 42", "(a : Type) -> Int" )
@@ -746,25 +815,13 @@ newTypeVar env =
     evalText "(λx -> x) 42"    --> Ok ( "42", "Int" )
     evalText "(λx -> 3.14) 42" --> Ok ( "3.14", "Num" )
 
-    -- Exponentiation
-    evalText "2 ^ 3"     --> Ok ( "8", "Int" )
-    evalText "2.0 ^ 3.0" --> Ok ( "8", "Num" )
-    evalText "y ^ 2.0"   -- Ok ( "y ^ 2", "Num" )
-
-    -- Multiplication
-    -- Division
-    -- Addition
-    -- Subtraction
-
-    -- Type abstraction
+    -- Function types
     evalText "a -> b"  --> Ok ( "(a : Type) -> (b : Type)", "Type -> Type" )
     evalText "a -> 42" --> Ok ( "(a : Type) -> 42", "Type -> Int" )
 
-    -- Typed expression (deferred evaluation)
+    -- Typed Expression (lazy evaluation)
     evalText "x : a" --> Ok ( "x", "a : Type" )
     evalText "z : a" --> Ok ( "z", "a : Type" )
-
-    -- And
 
     -- Type unions (TODO: define semantics for this)
     evalText "1 | 2" -- Ok ( "1 | 2", "Num" )
@@ -808,7 +865,7 @@ eval expr env =
                         withValue ( value, typ ) env
 
                     else
-                        -- Lazy evaluation through typed expressions
+                        -- Lazy evaluation through typed Expressions
                         -- TODO: unify the result type with the definition type.
                         -- TODO: update the name definition to the result
                         eval value env
@@ -833,8 +890,8 @@ eval expr env =
                 )
                 (newTypeVar env)
 
-        FAl a b ->
-            Debug.todo "eval FAl"
+        FrA a b ->
+            Debug.todo "eval FrA"
 
         -- Type definition
         App ((Lam x y) as e1) ((TE def typ) as e2) ->
@@ -854,29 +911,23 @@ eval expr env =
         App e1 e2 ->
             apply e1 e2 env
 
-        Exp (Int e1) (Int e2) ->
-            eval (Int (e1 ^ e2)) env
-
-        Exp (Num e1) (Num e2) ->
-            eval (Num (e1 ^ e2)) env
-
-        Exp e1 e2 ->
-            Debug.todo "eval Exp"
-
-        Mul e1 e2 ->
-            Debug.todo "eval Mul"
-
-        Add e1 e2 ->
-            Debug.todo "eval Add"
-
+        -- exp (Int e1) (Int e2) ->
+        --     eval (Int (e1 ^ e2)) env
+        -- exp (Num e1) (Num e2) ->
+        --     eval (Num (e1 ^ e2)) env
+        -- exp e1 e2 ->
+        --     Debug.todo "eval exp"
+        -- mul e1 e2 ->
+        --     Debug.todo "eval mul"
+        -- add e1 e2 ->
+        --     Debug.todo "eval add"
         TE e t ->
             evalType t env
                 |> map Tuple.first
                 |> map (Tuple.pair e)
 
-        Or e1 e2 ->
-            Debug.todo "eval Or"
-
+        -- Or e1 e2 ->
+        --     Debug.todo "eval Or"
         Fnc t1 t2 ->
             map2 (\( x, xt ) ( y, yt ) -> ( Fnc x y, Fnc xt yt ))
                 (evalType t1 env)
@@ -921,7 +972,7 @@ eval_ =
     eval
 
 
-{-| Evaluates a type expression.
+{-| Evaluates a type Expression.
 
     env : Env ()
     env =
@@ -942,7 +993,7 @@ eval_ =
     evalType (TE (Var "a") (Var "Int")) env |> .result  --> Ok (TE (Var "a") (Var "Int"), Var "Int")
     evalType (Var "a") env |> .result                   --> Ok (TE (Var "a") (Var "Type"), Var "Type")
 
-    -- Any valid expression can be a valid type.
+    -- Any valid Expression can be a valid type.
     evalType (Int 42) env |> .result     --> Ok (Int 42, Var "Int")
     evalType (Var "x") env |> .result    --> Ok (Int 42, Var "Int")
     evalType (Var "Int") env |> .result  --> Ok (Var "Int", Var "Type")
@@ -1032,21 +1083,6 @@ unify_ : Type -> Type -> Env a -> Env Type
 unify_ =
     -- Workaround for: https://github.com/elm/compiler/issues/2186
     unify
-
-
-{-| TODO: define free types before unifying
-
-    f : ∀a. a -> a
-    g : ∀a b. a -> b
-
-    f 5 -- (f 5, Int)
-    g 5 -- (f 5, ∀b. b)
-    f (x : ∀a. a) -- (f (x : ∀a. a), ∀a. a)
-
--}
-defineFreeTypes : Set String -> Set String
-defineFreeTypes freeTypes =
-    Debug.todo "defineFreeTypes"
 
 
 map : (a -> b) -> Env a -> Env b
@@ -1255,12 +1291,13 @@ exprP =
     in
     Parser.Expression.expression
         [ [ fromLeft App spaces ]
-        , [ fromRight Exp (char '^') ]
-        , [ fromLeft Mul (char '*') ]
-        , [ fromLeft Add (char '+') ]
+        , [ fromRight exp (char '^') ]
+        , [ fromLeft mul (char '*') ]
+        , [ fromLeft add (char '+') ]
         , [ fromRight Fnc (text "->") ]
         , [ fromLeft TE (char ':') ]
-        , [ fromLeft Or (text "|") ]
+
+        -- , [ fromLeft Or (text "|") ]
         , [ inbetween identity (char '(') (char ')')
           , term identity funcP
           , term identity letVarP
@@ -1289,17 +1326,17 @@ precedence expr =
         Var _ ->
             100
 
-        App _ _ ->
-            7
-
-        Exp _ _ ->
+        App (Var "^") _ ->
             6
 
-        Mul _ _ ->
+        App (Var "*") _ ->
             5
 
-        Add _ _ ->
+        App (Var "+") _ ->
             4
+
+        App _ _ ->
+            7
 
         Fnc _ _ ->
             3
@@ -1307,13 +1344,12 @@ precedence expr =
         TE _ _ ->
             2
 
-        Or _ _ ->
-            1
-
+        -- Or _ _ ->
+        --     1
         Lam _ _ ->
             0
 
-        FAl _ _ ->
+        FrA _ _ ->
             0
 
         Pos _ _ _ e ->
