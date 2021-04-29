@@ -177,6 +177,9 @@ newEnv =
 
     import Lambda exposing (Expr(..), read)
 
+    -- Anything / type variables / free types
+    read "@" --> Ok Any
+
     -- Values
     read "42"   --> Ok (Int 42)
     read "3.14" --> Ok (Num 3.14)
@@ -192,7 +195,7 @@ newEnv =
     read "λx y. z" --> Ok (Lam "x" (Lam "y" (Var "z")))
 
     -- Type abstraction
-    read "∀a. b" --> Ok (For "a" (Var "b"))
+    read "∀a. b"   --> Ok (For "a" (Var "b"))
     read "∀a b. c" --> Ok (For "a" (For "b" (Var "c")))
 
     -- Application
@@ -206,61 +209,61 @@ newEnv =
     read "x : a = y; z" --> Ok (letVar "x" (TE (Var "y") (Var "a")) (Var "z"))
 
     -- Operator precedence
-    read "x y z"      --> Ok (App (App (Var "x") (Var "y")) (Var "z"))
-    read "x y ^ z"    --> Ok (exp (App (Var "x") (Var "y")) (Var "z"))
-    read "x y * z"    --> Ok (mul (App (Var "x") (Var "y")) (Var "z"))
-    read "x y + z"    --> Ok (add (App (Var "x") (Var "y")) (Var "z"))
-    read "x y -> z"   --> Ok (Fnc (App (Var "x") (Var "y")) (Var "z"))
-    read "x y : z"    --> Ok (TE (App (Var "x") (Var "y")) (Var "z"))
-    read "x λy. z"    --> Ok (App (Var "x") (Lam "y" (Var "z")))
+    read "x y z"    --> Ok (App (App (Var "x") (Var "y")) (Var "z"))
+    read "x y ^ z"  --> Ok (exp (App (Var "x") (Var "y")) (Var "z"))
+    read "x y * z"  --> Ok (mul (App (Var "x") (Var "y")) (Var "z"))
+    read "x y + z"  --> Ok (add (App (Var "x") (Var "y")) (Var "z"))
+    read "x y -> z" --> Ok (Fnc (App (Var "x") (Var "y")) (Var "z"))
+    read "x y : z"  --> Ok (TE (App (Var "x") (Var "y")) (Var "z"))
+    read "x λy. z"  --> Ok (App (Var "x") (Lam "y" (Var "z")))
 
-    read "x ^ y z"     --> Ok (exp (Var "x") (App (Var "y") (Var "z")))
-    read "x ^ y ^ z"   --> Ok (exp (Var "x") (exp (Var "y") (Var "z")))
-    read "x ^ y * z"   --> Ok (mul (exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ y + z"   --> Ok (add (exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ y -> z"  --> Ok (Fnc (exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ y : z"   --> Ok (TE (exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ λy. z"   --> Ok (exp (Var "x") (Lam "y" (Var "z")))
+    read "x ^ y z"    --> Ok (exp (Var "x") (App (Var "y") (Var "z")))
+    read "x ^ y ^ z"  --> Ok (exp (Var "x") (exp (Var "y") (Var "z")))
+    read "x ^ y * z"  --> Ok (mul (exp (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y + z"  --> Ok (add (exp (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y -> z" --> Ok (Fnc (exp (Var "x") (Var "y")) (Var "z"))
+    read "x ^ y : z"  --> Ok (TE (exp (Var "x") (Var "y")) (Var "z"))
+    read "x ^ λy. z"  --> Ok (exp (Var "x") (Lam "y" (Var "z")))
 
-    read "x * y z"     --> Ok (mul (Var "x") (App (Var "y") (Var "z")))
-    read "x * y ^ z"   --> Ok (mul (Var "x") (exp (Var "y") (Var "z")))
-    read "x * y * z"   --> Ok (mul (mul (Var "x") (Var "y")) (Var "z"))
-    read "x * y + z"   --> Ok (add (mul (Var "x") (Var "y")) (Var "z"))
-    read "x * y : z"   --> Ok (TE (mul (Var "x") (Var "y")) (Var "z"))
-    read "x * y -> z"  --> Ok (Fnc (mul (Var "x") (Var "y")) (Var "z"))
-    read "x * λy. z"   --> Ok (mul (Var "x") (Lam "y" (Var "z")))
+    read "x * y z"    --> Ok (mul (Var "x") (App (Var "y") (Var "z")))
+    read "x * y ^ z"  --> Ok (mul (Var "x") (exp (Var "y") (Var "z")))
+    read "x * y * z"  --> Ok (mul (mul (Var "x") (Var "y")) (Var "z"))
+    read "x * y + z"  --> Ok (add (mul (Var "x") (Var "y")) (Var "z"))
+    read "x * y : z"  --> Ok (TE (mul (Var "x") (Var "y")) (Var "z"))
+    read "x * y -> z" --> Ok (Fnc (mul (Var "x") (Var "y")) (Var "z"))
+    read "x * λy. z"  --> Ok (mul (Var "x") (Lam "y" (Var "z")))
 
-    read "x + y z"     --> Ok (add (Var "x") (App (Var "y") (Var "z")))
-    read "x + y ^ z"   --> Ok (add (Var "x") (exp (Var "y") (Var "z")))
-    read "x + y * z"   --> Ok (add (Var "x") (mul (Var "y") (Var "z")))
-    read "x + y + z"   --> Ok (add (add (Var "x") (Var "y")) (Var "z"))
-    read "x + y -> z"  --> Ok (Fnc (add (Var "x") (Var "y")) (Var "z"))
-    read "x + y : z"   --> Ok (TE (add (Var "x") (Var "y")) (Var "z"))
-    read "x + λy. z"   --> Ok (add (Var "x") (Lam "y" (Var "z")))
+    read "x + y z"    --> Ok (add (Var "x") (App (Var "y") (Var "z")))
+    read "x + y ^ z"  --> Ok (add (Var "x") (exp (Var "y") (Var "z")))
+    read "x + y * z"  --> Ok (add (Var "x") (mul (Var "y") (Var "z")))
+    read "x + y + z"  --> Ok (add (add (Var "x") (Var "y")) (Var "z"))
+    read "x + y -> z" --> Ok (Fnc (add (Var "x") (Var "y")) (Var "z"))
+    read "x + y : z"  --> Ok (TE (add (Var "x") (Var "y")) (Var "z"))
+    read "x + λy. z"  --> Ok (add (Var "x") (Lam "y" (Var "z")))
 
-    read "x -> y z"     --> Ok (Fnc (Var "x") (App (Var "y") (Var "z")))
-    read "x -> y ^ z"   --> Ok (Fnc (Var "x") (exp (Var "y") (Var "z")))
-    read "x -> y * z"   --> Ok (Fnc (Var "x") (mul (Var "y") (Var "z")))
-    read "x -> y + z"   --> Ok (Fnc (Var "x") (add (Var "y") (Var "z")))
-    read "x -> y : z"   --> Ok (TE (Fnc (Var "x") (Var "y")) (Var "z"))
-    read "x -> y -> z"  --> Ok (Fnc (Var "x") (Fnc (Var "y") (Var "z")))
-    read "x -> λy. z"   --> Ok (Fnc (Var "x") (Lam "y" (Var "z")))
+    read "x -> y z"    --> Ok (Fnc (Var "x") (App (Var "y") (Var "z")))
+    read "x -> y ^ z"  --> Ok (Fnc (Var "x") (exp (Var "y") (Var "z")))
+    read "x -> y * z"  --> Ok (Fnc (Var "x") (mul (Var "y") (Var "z")))
+    read "x -> y + z"  --> Ok (Fnc (Var "x") (add (Var "y") (Var "z")))
+    read "x -> y : z"  --> Ok (TE (Fnc (Var "x") (Var "y")) (Var "z"))
+    read "x -> y -> z" --> Ok (Fnc (Var "x") (Fnc (Var "y") (Var "z")))
+    read "x -> λy. z"  --> Ok (Fnc (Var "x") (Lam "y" (Var "z")))
 
-    read "x : y z"     --> Ok (TE (Var "x") (App (Var "y") (Var "z")))
-    read "x : y ^ z"   --> Ok (TE (Var "x") (exp (Var "y") (Var "z")))
-    read "x : y * z"   --> Ok (TE (Var "x") (mul (Var "y") (Var "z")))
-    read "x : y + z"   --> Ok (TE (Var "x") (add (Var "y") (Var "z")))
-    read "x : y -> z"  --> Ok (TE (Var "x") (Fnc (Var "y") (Var "z")))
-    read "x : y : z"   --> Ok (TE (TE (Var "x") (Var "y")) (Var "z"))
-    read "x : λy. z"   --> Ok (TE (Var "x") (Lam "y" (Var "z")))
+    read "x : y z"    --> Ok (TE (Var "x") (App (Var "y") (Var "z")))
+    read "x : y ^ z"  --> Ok (TE (Var "x") (exp (Var "y") (Var "z")))
+    read "x : y * z"  --> Ok (TE (Var "x") (mul (Var "y") (Var "z")))
+    read "x : y + z"  --> Ok (TE (Var "x") (add (Var "y") (Var "z")))
+    read "x : y -> z" --> Ok (TE (Var "x") (Fnc (Var "y") (Var "z")))
+    read "x : y : z"  --> Ok (TE (TE (Var "x") (Var "y")) (Var "z"))
+    read "x : λy. z"  --> Ok (TE (Var "x") (Lam "y" (Var "z")))
 
-    read "λx. y z"     --> Ok (Lam "x" (App (Var "y") (Var "z")))
-    read "λx. y ^ z"   --> Ok (Lam "x" (exp (Var "y") (Var "z")))
-    read "λx. y * z"   --> Ok (Lam "x" (mul (Var "y") (Var "z")))
-    read "λx. y + z"   --> Ok (Lam "x" (add (Var "y") (Var "z")))
-    read "λx. y -> z"  --> Ok (Lam "x" (Fnc (Var "y") (Var "z")))
-    read "λx. y : z"   --> Ok (Lam "x" (TE (Var "y") (Var "z")))
-    read "λx. λy. z"   --> Ok (Lam "x" (Lam "y" (Var "z")))
+    read "λx. y z"    --> Ok (Lam "x" (App (Var "y") (Var "z")))
+    read "λx. y ^ z"  --> Ok (Lam "x" (exp (Var "y") (Var "z")))
+    read "λx. y * z"  --> Ok (Lam "x" (mul (Var "y") (Var "z")))
+    read "λx. y + z"  --> Ok (Lam "x" (add (Var "y") (Var "z")))
+    read "λx. y -> z" --> Ok (Lam "x" (Fnc (Var "y") (Var "z")))
+    read "λx. y : z"  --> Ok (Lam "x" (TE (Var "y") (Var "z")))
+    read "λx. λy. z"  --> Ok (Lam "x" (Lam "y" (Var "z")))
 
     read "x + (y + z)" --> Ok (add (Var "x") (add (Var "y") (Var "z")))
     read "(x ^ y) ^ z" --> Ok (exp (exp (Var "x") (Var "y")) (Var "z"))
@@ -275,6 +278,9 @@ read txt =
 {-| Writes a Lambda Expression.
 
     import Lambda exposing (Expr(..), write)
+
+    -- Anything / type variables / free types
+    write Any --> "@"
 
     -- Values
     write (Int 42)   --> "42"
@@ -303,81 +309,119 @@ read txt =
     write (App (Lam "x" (Var "z")) (TE (Var "y") (Var "a"))) --> "x : a = y; z"
 
     -- Operator precedence
-    write (App (App (Var "x") (Var "y")) (Var "z"))  --> "x y z"
-    write (exp (App (Var "x") (Var "y")) (Var "z"))  --> "x y ^ z"
-    write (mul (App (Var "x") (Var "y")) (Var "z"))  --> "x y * z"
-    write (add (App (Var "x") (Var "y")) (Var "z"))  --> "x y + z"
+    write (App (App (Var "x") (Var "y")) (Var "z")) --> "x y z"
+    write (exp (App (Var "x") (Var "y")) (Var "z")) --> "x y ^ z"
+    write (mul (App (Var "x") (Var "y")) (Var "z")) --> "x y * z"
+    write (add (App (Var "x") (Var "y")) (Var "z")) --> "x y + z"
     write (Fnc (App (Var "x") (Var "y")) (Var "z")) --> "x y -> z"
-    write (TE (App (Var "x") (Var "y")) (Var "z"))   --> "x y : z"
-    write (App (Var "x") (Lam "y" (Var "z")))        --> "x (λy. z)"
+    write (TE (App (Var "x") (Var "y")) (Var "z"))  --> "x y : z"
+    write (App (Var "x") (Lam "y" (Var "z")))       --> "x (λy. z)"
 
-    write (exp (Var "x") (App (Var "y") (Var "z")))  --> "x ^ y z"
-    write (exp (Var "x") (exp (Var "y") (Var "z")))  --> "x ^ y ^ z"
-    write (mul (exp (Var "x") (Var "y")) (Var "z"))  --> "x ^ y * z"
-    write (add (exp (Var "x") (Var "y")) (Var "z"))  --> "x ^ y + z"
+    write (exp (Var "x") (App (Var "y") (Var "z"))) --> "x ^ y z"
+    write (exp (Var "x") (exp (Var "y") (Var "z"))) --> "x ^ y ^ z"
+    write (mul (exp (Var "x") (Var "y")) (Var "z")) --> "x ^ y * z"
+    write (add (exp (Var "x") (Var "y")) (Var "z")) --> "x ^ y + z"
     write (Fnc (exp (Var "x") (Var "y")) (Var "z")) --> "x ^ y -> z"
-    write (TE (exp (Var "x") (Var "y")) (Var "z"))   --> "x ^ y : z"
-    write (exp (Var "x") (Lam "y" (Var "z")))        --> "x ^ (λy. z)"
+    write (TE (exp (Var "x") (Var "y")) (Var "z"))  --> "x ^ y : z"
+    write (exp (Var "x") (Lam "y" (Var "z")))       --> "x ^ (λy. z)"
 
-    write (mul (Var "x") (App (Var "y") (Var "z")))  --> "x * y z"
-    write (mul (Var "x") (exp (Var "y") (Var "z")))  --> "x * y ^ z"
-    write (mul (mul (Var "x") (Var "y")) (Var "z"))  --> "x * y * z"
-    write (add (mul (Var "x") (Var "y")) (Var "z"))  --> "x * y + z"
+    write (mul (Var "x") (App (Var "y") (Var "z"))) --> "x * y z"
+    write (mul (Var "x") (exp (Var "y") (Var "z"))) --> "x * y ^ z"
+    write (mul (mul (Var "x") (Var "y")) (Var "z")) --> "x * y * z"
+    write (add (mul (Var "x") (Var "y")) (Var "z")) --> "x * y + z"
     write (Fnc (mul (Var "x") (Var "y")) (Var "z")) --> "x * y -> z"
-    write (TE (mul (Var "x") (Var "y")) (Var "z"))   --> "x * y : z"
-    write (mul (Var "x") (Lam "y" (Var "z")))        --> "x * (λy. z)"
+    write (TE (mul (Var "x") (Var "y")) (Var "z"))  --> "x * y : z"
+    write (mul (Var "x") (Lam "y" (Var "z")))       --> "x * (λy. z)"
 
-    write (add (Var "x") (App (Var "y") (Var "z")))  --> "x + y z"
-    write (add (Var "x") (exp (Var "y") (Var "z")))  --> "x + y ^ z"
-    write (add (Var "x") (mul (Var "y") (Var "z")))  --> "x + y * z"
-    write (add (add (Var "x") (Var "y")) (Var "z"))  --> "x + y + z"
+    write (add (Var "x") (App (Var "y") (Var "z"))) --> "x + y z"
+    write (add (Var "x") (exp (Var "y") (Var "z"))) --> "x + y ^ z"
+    write (add (Var "x") (mul (Var "y") (Var "z"))) --> "x + y * z"
+    write (add (add (Var "x") (Var "y")) (Var "z")) --> "x + y + z"
     write (Fnc (add (Var "x") (Var "y")) (Var "z")) --> "x + y -> z"
-    write (TE (add (Var "x") (Var "y")) (Var "z"))   --> "x + y : z"
-    write (add (Var "x") (Lam "y" (Var "z")))        --> "x + (λy. z)"
+    write (TE (add (Var "x") (Var "y")) (Var "z"))  --> "x + y : z"
+    write (add (Var "x") (Lam "y" (Var "z")))       --> "x + (λy. z)"
 
-    write (Fnc (Var "x") (App (Var "y") (Var "z")))  --> "x -> y z"
-    write (Fnc (Var "x") (exp (Var "y") (Var "z")))  --> "x -> y ^ z"
-    write (Fnc (Var "x") (mul (Var "y") (Var "z")))  --> "x -> y * z"
-    write (Fnc (Var "x") (add (Var "y") (Var "z")))  --> "x -> y + z"
+    write (Fnc (Var "x") (App (Var "y") (Var "z"))) --> "x -> y z"
+    write (Fnc (Var "x") (exp (Var "y") (Var "z"))) --> "x -> y ^ z"
+    write (Fnc (Var "x") (mul (Var "y") (Var "z"))) --> "x -> y * z"
+    write (Fnc (Var "x") (add (Var "y") (Var "z"))) --> "x -> y + z"
     write (Fnc (Var "x") (Fnc (Var "y") (Var "z"))) --> "x -> y -> z"
-    write (TE (Fnc (Var "x") (Var "y")) (Var "z"))   --> "x -> y : z"
-    write (Fnc (Var "x") (Lam "y" (Var "z")))        --> "x -> (λy. z)"
+    write (TE (Fnc (Var "x") (Var "y")) (Var "z"))  --> "x -> y : z"
+    write (Fnc (Var "x") (Lam "y" (Var "z")))       --> "x -> (λy. z)"
 
-    write (TE (Var "x") (App (Var "y") (Var "z")))  --> "x : y z"
-    write (TE (Var "x") (exp (Var "y") (Var "z")))  --> "x : y ^ z"
-    write (TE (Var "x") (mul (Var "y") (Var "z")))  --> "x : y * z"
-    write (TE (Var "x") (add (Var "y") (Var "z")))  --> "x : y + z"
+    write (TE (Var "x") (App (Var "y") (Var "z"))) --> "x : y z"
+    write (TE (Var "x") (exp (Var "y") (Var "z"))) --> "x : y ^ z"
+    write (TE (Var "x") (mul (Var "y") (Var "z"))) --> "x : y * z"
+    write (TE (Var "x") (add (Var "y") (Var "z"))) --> "x : y + z"
     write (TE (Var "x") (Fnc (Var "y") (Var "z"))) --> "x : y -> z"
-    write (TE (TE (Var "x") (Var "y")) (Var "z"))   --> "x : y : z"
-    write (TE (Var "x") (Lam "y" (Var "z")))        --> "x : (λy. z)"
+    write (TE (TE (Var "x") (Var "y")) (Var "z"))  --> "x : y : z"
+    write (TE (Var "x") (Lam "y" (Var "z")))       --> "x : (λy. z)"
 
-    write (Lam "x" (App (Var "y") (Var "z")))  --> "λx. y z"
-    write (Lam "x" (exp (Var "y") (Var "z")))  --> "λx. y ^ z"
-    write (Lam "x" (mul (Var "y") (Var "z")))  --> "λx. y * z"
-    write (Lam "x" (add (Var "y") (Var "z")))  --> "λx. y + z"
-    write (Lam "x" (TE (Var "y") (Var "z")))   --> "λx. y : z"
-    write (Lam "x" (Fnc (Var "y") (Var "z")))  --> "λx. y -> z"
-    write (Lam "x" (Lam "y" (Var "z")))        --> "λx y. z"
+    write (Lam "x" (App (Var "y") (Var "z"))) --> "λx. y z"
+    write (Lam "x" (exp (Var "y") (Var "z"))) --> "λx. y ^ z"
+    write (Lam "x" (mul (Var "y") (Var "z"))) --> "λx. y * z"
+    write (Lam "x" (add (Var "y") (Var "z"))) --> "λx. y + z"
+    write (Lam "x" (TE (Var "y") (Var "z")))  --> "λx. y : z"
+    write (Lam "x" (Fnc (Var "y") (Var "z"))) --> "λx. y -> z"
+    write (Lam "x" (Lam "y" (Var "z")))       --> "λx y. z"
 
-    TODO: fix this!
-    write (add (Var "x") (add (Var "y") (Var "z"))) -- "x + (y + z)"
-    write (exp (exp (Var "x") (Var "y")) (Var "z")) -- "(x ^ y) ^ z"
+    write (add (Var "x") (add (Var "y") (Var "z"))) --> "x + (y + z)"
+    write (exp (exp (Var "x") (Var "y")) (Var "z")) --> "(x ^ y) ^ z"
 
 -}
 write : Expr -> String
 write expr =
     let
-        unop1 : Expr -> Expr -> String
-        unop1 op e =
-            if precedence e < precedence op then
+        precedence : Expr -> Int
+        precedence e =
+            case e of
+                Lam _ _ ->
+                    0
+
+                For _ _ ->
+                    0
+
+                TE _ _ ->
+                    1
+
+                Fnc _ _ ->
+                    2
+
+                App (App (Var "+") _) _ ->
+                    3
+
+                App (App (Var "*") _) _ ->
+                    4
+
+                App (App (Var "^") _) _ ->
+                    5
+
+                App _ _ ->
+                    6
+
+                Any ->
+                    7
+
+                Int _ ->
+                    7
+
+                Num _ ->
+                    7
+
+                Var _ ->
+                    7
+
+        unop1 : Expr -> String
+        unop1 e =
+            if precedence e < precedence expr then
                 "(" ++ write e ++ ")"
 
             else
                 write e
 
-        unop2 : Expr -> Expr -> String
-        unop2 op e =
-            if precedence e <= precedence op then
+        unop2 : Expr -> String
+        unop2 e =
+            if precedence e <= precedence expr then
                 "(" ++ write e ++ ")"
 
             else
@@ -397,7 +441,7 @@ write expr =
             x
 
         Fnc t1 t2 ->
-            unop2 expr t1 ++ " -> " ++ unop1 expr t2
+            unop2 t1 ++ " -> " ++ unop1 t2
 
         Lam _ _ ->
             tupleMap
@@ -415,20 +459,20 @@ write expr =
         App (Lam x e) v ->
             x ++ " := " ++ write v ++ "; " ++ write e
 
-        App ((App (Var "^") e1) as op) e2 ->
-            unop2 op e1 ++ " ^ " ++ unop1 op e2
+        App (App (Var "^") e1) e2 ->
+            unop2 e1 ++ " ^ " ++ unop1 e2
 
-        App ((App (Var "*") e1) as op) e2 ->
-            unop1 op e1 ++ " * " ++ unop2 op e2
+        App (App (Var "*") e1) e2 ->
+            unop1 e1 ++ " * " ++ unop2 e2
 
-        App ((App (Var "+") e1) as op) e2 ->
-            unop1 op e1 ++ " + " ++ unop2 op e2
+        App (App (Var "+") e1) e2 ->
+            unop1 e1 ++ " + " ++ unop2 e2
 
         App e1 e2 ->
-            unop1 expr e1 ++ " " ++ unop2 expr e2
+            unop1 e1 ++ " " ++ unop2 e2
 
         TE e t ->
-            unop1 expr e ++ " : " ++ unop2 expr t
+            unop1 e ++ " : " ++ unop2 t
 
 
 
@@ -1319,48 +1363,3 @@ exprP =
           , term (\_ -> Any) (char '@')
           ]
         ]
-
-
-precedence : Expr -> Int
-precedence expr =
-    -- TODO: find a way to have only one definition for operator precedence
-    --       both for readers/parsers and writers/formatters.
-    case expr of
-        -- TODO: adjust these 100s and move to local variable in `write`
-        Any ->
-            100
-
-        Int _ ->
-            100
-
-        Num _ ->
-            100
-
-        Var _ ->
-            100
-
-        App (Var "^") _ ->
-            6
-
-        App (Var "*") _ ->
-            5
-
-        App (Var "+") _ ->
-            4
-
-        App _ _ ->
-            7
-
-        Fnc _ _ ->
-            3
-
-        TE _ _ ->
-            2
-
-        -- Or _ _ ->
-        --     1
-        Lam _ _ ->
-            0
-
-        For _ _ ->
-            0
