@@ -7,7 +7,6 @@ module Lambda exposing
     , andThen
     , andThen2
     , andThen3
-    , andThen4
     , asCall
     , asForAll
     , asFunc
@@ -25,7 +24,6 @@ module Lambda exposing
     , map
     , mul
     , newEnv
-    , newTypeVar
     , read
     , unify
     , withError
@@ -765,29 +763,6 @@ defineType ( typeName, typeInputs ) constructors env =
         |> withResult env.result
 
 
-{-| Creates a new type variable with a unique name.
-
-    import Dict
-    import DisjointSet
-
-    -- Starts with "a".
-    newTypeVar newEnv |> .result --> Ok (Var "a")
-
-    -- Goes alphabetically if a type is already defined.
-    newTypeVar { newEnv | names = Dict.singleton "a" (Var "a", Var "Type") } |> .result --> Ok (Var "b")
-
-    -- Names can have multiple letters when a-z are all used up.
-    newTypeVar { newEnv | nameSeed = 1234 } |> .result --> Ok (Var "ast")
-
--}
-newTypeVar : Env a -> Env Type
-newTypeVar env =
-    Dict.keys env.names
-        |> Set.fromList
-        |> newVarName env.nameSeed
-        |> tupleMap (\t seed -> withValue (Var t) { env | nameSeed = seed })
-
-
 {-| Evaluates an Expression.
 
     import Lambda
@@ -855,23 +830,25 @@ newTypeVar env =
     evalExpr "(λx. x) 42"    --> Ok ( "42", "Int" )
     evalExpr "(λx. 3.14) 42" --> Ok ( "3.14", "Num" )
 
-    -- Typed Expression (lazy evaluation)
-    evalExpr "x : Int" --> Ok ( "x", "Int" )
-    evalExpr "x : a"   --> Ok ( "x", "a" )
-    evalExpr "z : a"   --> Ok ( "z", "a" )
+    -- Typed Expression (lazy evaluation to allow for recursive calls)
+    evalExpr "x : Int"   --> Ok ( "x", "Int" )
+    evalExpr "x : ∀a. a" --> Ok ( "x", "a" )
+    evalExpr "x : a"     --> Ok ( "x", "a" )
+    evalExpr "z : a"     --> Ok ( "z", "a" ) -- ok, even if `z` isn't defined yet
 
-    -- Variable definitions (inferred by lowercase name)
-    evalExpr "x := 42; x"   -- Ok ( "42", "Int" )
-    evalExpr "x : a = y; x" -- Ok ( "y", "Num" )
+    -- Variable definitions
+    evalExpr "x := 42; x"   --> Ok ( "42", "Int" )
+    evalExpr "x : a = y; x" --> Ok ( "y", "Num" )
 
-    -- Named type definitions (inferred by uppercase name)
-    -- Undefined names are defined as constructors.
-    evalExpr "Maybe a := Just a | Nothing; Just 42" -- Ok ( "Just 42", "Maybe Int" )
-    evalExpr "Maybe a := Just a | Nothing; Nothing" -- Ok ( "Nothing", "Maybe a" )
+    --
+
+    -- Type definitions
+    evalExpr "$Maybe a = Just a | Nothing; Just 42" -- Ok ( "Just 42", "Maybe Int" )
+    evalExpr "$Maybe a = Just a | Nothing; Nothing" -- Ok ( "Just 42", "Maybe Int" )
 
     -- Case application
-    evalExpr "Bool := True | False; True 1 2" -- Ok ( "1", "Int" )
-    evalExpr "Bool := True | False; False 1 2" -- Ok ( "2", "Int" )
+    evalExpr "$Bool = True | False; True 1 2" -- Ok ( "1", "Int" )
+    evalExpr "$Bool = True | False; False 1 2" -- Ok ( "2", "Int" )
 
 -}
 eval : Expr -> Env a -> Env ( Expr, Type )
@@ -925,6 +902,7 @@ eval expr env =
             -- (λx. x)  ==> (λx. x)  : (∀a. a -> a)
             -- (λx. 42) ==> (λx. 42) : (∀a. a -> Int)
             let
+                -- TODO: use newTypeVar
                 xT =
                     Dict.keys env.names
                         |> Set.fromList
@@ -948,21 +926,19 @@ eval expr env =
                 |> define x (TE (Var x) Any)
                 |> eval_ y
 
-        -- Type definition
-        App ((Lam x y) as e1) ((TE def typ) as e2) ->
-            let
-                ( inputTypes, outputType ) =
-                    asFuncType typ
-            in
-            if outputType == Var "Type" then
-                env
-                    |> defineType ( x, inputTypes )
-                        (asConstructors def (call (Var x) inputTypes))
-                    |> eval_ y
-
-            else
-                apply e1 e2 env
-
+        -- -- Type definition
+        -- App ((Lam x y) as e1) ((TE def typ) as e2) ->
+        --     let
+        --         ( inputTypes, outputType ) =
+        --             asFuncType typ
+        --     in
+        --     if outputType == Var "Type" then
+        --         env
+        --             |> defineType ( x, inputTypes )
+        --                 (asConstructors def (call (Var x) inputTypes))
+        --             |> eval_ y
+        --     else
+        --         apply e1 e2 env
         App e1 e2 ->
             apply e1 e2 env
 
@@ -1162,17 +1138,6 @@ andThen3 f env envAB envBC =
     andThen (\x envA -> andThen2 (f x) (envAB envA) envBC) env
 
 
-andThen4 :
-    (a -> b -> c -> d -> Env d -> Env e)
-    -> Env a
-    -> (Env a -> Env b)
-    -> (Env b -> Env c)
-    -> (Env c -> Env d)
-    -> Env e
-andThen4 f env envAB envBC envCD =
-    andThen (\x envA -> andThen3 (f x) (envAB envA) envBC envCD) env
-
-
 withResult : Result Error b -> Env a -> Env b
 withResult result env =
     { names = env.names
@@ -1196,28 +1161,21 @@ withError err env =
 -- Utility functions
 
 
-zip : List a -> List b -> List ( a, b )
-zip list1 list2 =
-    case ( list1, list2 ) of
-        ( x :: xs, y :: ys ) ->
-            ( x, y ) :: zip xs ys
-
-        _ ->
-            []
-
-
 tupleMap : (a -> b -> c) -> ( a, b ) -> c
 tupleMap f ( x, y ) =
     f x y
 
 
-flip : (a -> b -> c) -> b -> a -> c
-flip f x y =
-    f y x
-
-
 
 -- Local helper functions
+
+
+newTypeVar : Env a -> Env Type
+newTypeVar env =
+    Dict.keys env.names
+        |> Set.fromList
+        |> newVarName env.nameSeed
+        |> tupleMap (\t seed -> withValue (Var t) { env | nameSeed = seed })
 
 
 newVarName : Int -> Set String -> ( String, Int )
@@ -1368,7 +1326,7 @@ precedence expr =
     -- TODO: find a way to have only one definition for operator precedence
     --       both for readers/parsers and writers/formatters.
     case expr of
-        -- TODO: adjust these 100s
+        -- TODO: adjust these 100s and move to local variable in `write`
         Any ->
             100
 
