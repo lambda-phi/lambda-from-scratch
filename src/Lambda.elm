@@ -9,6 +9,7 @@ module Lambda exposing
     , andThen3
     , andThen4
     , asCall
+    , asForAll
     , asFunc
     , asFuncType
     , call
@@ -17,6 +18,7 @@ module Lambda exposing
     , eval
     , evalType
     , exp
+    , forAll
     , func
     , funcType
     , letVar
@@ -85,11 +87,12 @@ Notation (modified): <https://en.wikipedia.org/wiki/Type_rule>
         if   Γ ⊢ f : (∀x:S. T)
              Γ ⊢ s : S
         then Γ ⊢ f s : (let x:S = s in T)
+             Γ ⊢ f s : ((\x:S. T) s)
 
     Lam
-        if   Γ{x:S} ⊢ e : T
+        if   Γ{x:S} ⊢ y : T
              Γ ⊢ (∀x:S. T) : *n
-        then Γ ⊢ (λx:S. e) : (∀x:S. T)
+        then Γ ⊢ (λx. y) : (∀a b. a -> b)
 
     ForAll
         if   Γ{x:S} ⊢ T : *n
@@ -122,17 +125,15 @@ TODO: rename "Parser" to "Reader" and "Formatter" to "Writer" (?)
 
 -}
 type Expr
-    = Typ (List String) -- Type    %True False%
-    | Int Int -- 42
-    | Num Float -- 3.14
-    | Var String -- x
-    | Lam String Expr -- λx -> y
-    | FrA String Type -- ∀a. b
-    | App Expr Expr -- f x
-    | Fnc Type Type -- a -> b
-    | TE Expr Type -- x : a
-      -- Error reporting
-    | Pos String ( Int, Int ) ( Int, Int ) Expr -- filename start end Expr
+    = Any -- @                  anything / free type / type variable
+    | Int Int -- 42             integer value
+    | Num Float -- 3.14         number value / floating point value
+    | Var String -- x           variable
+    | Fnc Type Type -- a -> b   function type
+    | Lam String Expr -- λx. y  lambda abstraction
+    | For String Type -- ∀a. b  for all types / type abstraction
+    | App Expr Expr -- f x      application
+    | TE Expr Type -- x : a     typed expression
 
 
 {-| Types are just Expressions, and any valid Expression is a valid type.
@@ -185,22 +186,22 @@ newEnv =
     -- Variables
     read "x" --> Ok (Var "x")
 
-    -- Lamtraction
-    read "λx -> y"   --> Ok (Lam "x" (Var "y"))
-    read "λx y -> z" --> Ok (Lam "x" (Lam "y" (Var "z")))
+    -- Function type
+    read "a -> b" --> Ok (Fnc (Var "a") (Var "b"))
+
+    -- Lambda abstraction
+    read "λx. y"   --> Ok (Lam "x" (Var "y"))
+    read "λx y. z" --> Ok (Lam "x" (Lam "y" (Var "z")))
+
+    -- Type abstraction
+    read "∀a. b" --> Ok (For "a" (Var "b"))
+    read "∀a b. c" --> Ok (For "a" (For "b" (Var "c")))
 
     -- Application
     read "f x" --> Ok (App (Var "f") (Var "x"))
 
-    -- TODO: ^ * +
-
     -- Typed Expression
     read "x : a" --> Ok (TE (Var "x") (Var "a"))
-
-    -- TODO: |
-
-    -- Type abstraction
-    read "a -> b" --> Ok (Fnc (Var "a") (Var "b"))
 
     -- Variable definitions
     read "x := y; z"    --> Ok (letVar "x" (Var "y") (Var "z"))
@@ -213,7 +214,7 @@ newEnv =
     read "x y + z"    --> Ok (add (App (Var "x") (Var "y")) (Var "z"))
     read "x y -> z"   --> Ok (Fnc (App (Var "x") (Var "y")) (Var "z"))
     read "x y : z"    --> Ok (TE (App (Var "x") (Var "y")) (Var "z"))
-    read "x λy -> z"  --> Ok (App (Var "x") (Lam "y" (Var "z")))
+    read "x λy. z"    --> Ok (App (Var "x") (Lam "y" (Var "z")))
 
     read "x ^ y z"     --> Ok (exp (Var "x") (App (Var "y") (Var "z")))
     read "x ^ y ^ z"   --> Ok (exp (Var "x") (exp (Var "y") (Var "z")))
@@ -221,7 +222,7 @@ newEnv =
     read "x ^ y + z"   --> Ok (add (exp (Var "x") (Var "y")) (Var "z"))
     read "x ^ y -> z"  --> Ok (Fnc (exp (Var "x") (Var "y")) (Var "z"))
     read "x ^ y : z"   --> Ok (TE (exp (Var "x") (Var "y")) (Var "z"))
-    read "x ^ λy -> z" --> Ok (exp (Var "x") (Lam "y" (Var "z")))
+    read "x ^ λy. z"   --> Ok (exp (Var "x") (Lam "y" (Var "z")))
 
     read "x * y z"     --> Ok (mul (Var "x") (App (Var "y") (Var "z")))
     read "x * y ^ z"   --> Ok (mul (Var "x") (exp (Var "y") (Var "z")))
@@ -229,7 +230,7 @@ newEnv =
     read "x * y + z"   --> Ok (add (mul (Var "x") (Var "y")) (Var "z"))
     read "x * y : z"   --> Ok (TE (mul (Var "x") (Var "y")) (Var "z"))
     read "x * y -> z"  --> Ok (Fnc (mul (Var "x") (Var "y")) (Var "z"))
-    read "x * λy -> z" --> Ok (mul (Var "x") (Lam "y" (Var "z")))
+    read "x * λy. z"   --> Ok (mul (Var "x") (Lam "y" (Var "z")))
 
     read "x + y z"     --> Ok (add (Var "x") (App (Var "y") (Var "z")))
     read "x + y ^ z"   --> Ok (add (Var "x") (exp (Var "y") (Var "z")))
@@ -237,7 +238,7 @@ newEnv =
     read "x + y + z"   --> Ok (add (add (Var "x") (Var "y")) (Var "z"))
     read "x + y -> z"  --> Ok (Fnc (add (Var "x") (Var "y")) (Var "z"))
     read "x + y : z"   --> Ok (TE (add (Var "x") (Var "y")) (Var "z"))
-    read "x + λy -> z" --> Ok (add (Var "x") (Lam "y" (Var "z")))
+    read "x + λy. z"   --> Ok (add (Var "x") (Lam "y" (Var "z")))
 
     read "x -> y z"     --> Ok (Fnc (Var "x") (App (Var "y") (Var "z")))
     read "x -> y ^ z"   --> Ok (Fnc (Var "x") (exp (Var "y") (Var "z")))
@@ -245,7 +246,7 @@ newEnv =
     read "x -> y + z"   --> Ok (Fnc (Var "x") (add (Var "y") (Var "z")))
     read "x -> y : z"   --> Ok (TE (Fnc (Var "x") (Var "y")) (Var "z"))
     read "x -> y -> z"  --> Ok (Fnc (Var "x") (Fnc (Var "y") (Var "z")))
-    read "x -> λy -> z" --> Ok (Fnc (Var "x") (Lam "y" (Var "z")))
+    read "x -> λy. z"   --> Ok (Fnc (Var "x") (Lam "y" (Var "z")))
 
     read "x : y z"     --> Ok (TE (Var "x") (App (Var "y") (Var "z")))
     read "x : y ^ z"   --> Ok (TE (Var "x") (exp (Var "y") (Var "z")))
@@ -253,15 +254,15 @@ newEnv =
     read "x : y + z"   --> Ok (TE (Var "x") (add (Var "y") (Var "z")))
     read "x : y -> z"  --> Ok (TE (Var "x") (Fnc (Var "y") (Var "z")))
     read "x : y : z"   --> Ok (TE (TE (Var "x") (Var "y")) (Var "z"))
-    read "x : λy -> z" --> Ok (TE (Var "x") (Lam "y" (Var "z")))
+    read "x : λy. z"   --> Ok (TE (Var "x") (Lam "y" (Var "z")))
 
-    read "λx -> y z"     --> Ok (Lam "x" (App (Var "y") (Var "z")))
-    read "λx -> y ^ z"   --> Ok (Lam "x" (exp (Var "y") (Var "z")))
-    read "λx -> y * z"   --> Ok (Lam "x" (mul (Var "y") (Var "z")))
-    read "λx -> y + z"   --> Ok (Lam "x" (add (Var "y") (Var "z")))
-    read "λx -> y -> z"  --> Ok (Lam "x" (Fnc (Var "y") (Var "z")))
-    read "λx -> y : z"   --> Ok (Lam "x" (TE (Var "y") (Var "z")))
-    read "λx -> λy -> z" --> Ok (Lam "x" (Lam "y" (Var "z")))
+    read "λx. y z"     --> Ok (Lam "x" (App (Var "y") (Var "z")))
+    read "λx. y ^ z"   --> Ok (Lam "x" (exp (Var "y") (Var "z")))
+    read "λx. y * z"   --> Ok (Lam "x" (mul (Var "y") (Var "z")))
+    read "λx. y + z"   --> Ok (Lam "x" (add (Var "y") (Var "z")))
+    read "λx. y -> z"  --> Ok (Lam "x" (Fnc (Var "y") (Var "z")))
+    read "λx. y : z"   --> Ok (Lam "x" (TE (Var "y") (Var "z")))
+    read "λx. λy. z"   --> Ok (Lam "x" (Lam "y" (Var "z")))
 
     read "x + (y + z)" --> Ok (add (Var "x") (add (Var "y") (Var "z")))
     read "(x ^ y) ^ z" --> Ok (exp (exp (Var "x") (Var "y")) (Var "z"))
@@ -284,21 +285,20 @@ read txt =
     -- Variables
     write (Var "x") --> "x"
 
-    -- Lamtraction
-    write (Lam "x" (Var "y")) --> "λx -> y"
+    -- Function type
+    write (Fnc (Var "a") (Var "b")) --> "a -> b"
+
+    -- Lambda abstraction
+    write (Lam "x" (Var "y")) --> "λx. y"
+
+    -- Type abstraction
+    write (For "a" (Var "b")) --> "∀a. b"
 
     -- Application
     write (App (Var "f") (Var "x")) --> "f x"
 
-    -- TODO: ^ * +
-
     -- Typed Expression
     write (TE (Var "x") (Var "a")) --> "x : a"
-
-    -- TODO: |
-
-    -- Type abstraction
-    write (Fnc (Var "a") (Var "b")) --> "a -> b"
 
     -- Variable definitions
     write (App (Lam "x" (Var "z")) (Var "y"))                --> "x := y; z"
@@ -311,7 +311,7 @@ read txt =
     write (add (App (Var "x") (Var "y")) (Var "z"))  --> "x y + z"
     write (Fnc (App (Var "x") (Var "y")) (Var "z")) --> "x y -> z"
     write (TE (App (Var "x") (Var "y")) (Var "z"))   --> "x y : z"
-    write (App (Var "x") (Lam "y" (Var "z")))        --> "x (λy -> z)"
+    write (App (Var "x") (Lam "y" (Var "z")))        --> "x (λy. z)"
 
     write (exp (Var "x") (App (Var "y") (Var "z")))  --> "x ^ y z"
     write (exp (Var "x") (exp (Var "y") (Var "z")))  --> "x ^ y ^ z"
@@ -319,7 +319,7 @@ read txt =
     write (add (exp (Var "x") (Var "y")) (Var "z"))  --> "x ^ y + z"
     write (Fnc (exp (Var "x") (Var "y")) (Var "z")) --> "x ^ y -> z"
     write (TE (exp (Var "x") (Var "y")) (Var "z"))   --> "x ^ y : z"
-    write (exp (Var "x") (Lam "y" (Var "z")))        --> "x ^ (λy -> z)"
+    write (exp (Var "x") (Lam "y" (Var "z")))        --> "x ^ (λy. z)"
 
     write (mul (Var "x") (App (Var "y") (Var "z")))  --> "x * y z"
     write (mul (Var "x") (exp (Var "y") (Var "z")))  --> "x * y ^ z"
@@ -327,7 +327,7 @@ read txt =
     write (add (mul (Var "x") (Var "y")) (Var "z"))  --> "x * y + z"
     write (Fnc (mul (Var "x") (Var "y")) (Var "z")) --> "x * y -> z"
     write (TE (mul (Var "x") (Var "y")) (Var "z"))   --> "x * y : z"
-    write (mul (Var "x") (Lam "y" (Var "z")))        --> "x * (λy -> z)"
+    write (mul (Var "x") (Lam "y" (Var "z")))        --> "x * (λy. z)"
 
     write (add (Var "x") (App (Var "y") (Var "z")))  --> "x + y z"
     write (add (Var "x") (exp (Var "y") (Var "z")))  --> "x + y ^ z"
@@ -335,7 +335,7 @@ read txt =
     write (add (add (Var "x") (Var "y")) (Var "z"))  --> "x + y + z"
     write (Fnc (add (Var "x") (Var "y")) (Var "z")) --> "x + y -> z"
     write (TE (add (Var "x") (Var "y")) (Var "z"))   --> "x + y : z"
-    write (add (Var "x") (Lam "y" (Var "z")))        --> "x + (λy -> z)"
+    write (add (Var "x") (Lam "y" (Var "z")))        --> "x + (λy. z)"
 
     write (Fnc (Var "x") (App (Var "y") (Var "z")))  --> "x -> y z"
     write (Fnc (Var "x") (exp (Var "y") (Var "z")))  --> "x -> y ^ z"
@@ -343,7 +343,7 @@ read txt =
     write (Fnc (Var "x") (add (Var "y") (Var "z")))  --> "x -> y + z"
     write (Fnc (Var "x") (Fnc (Var "y") (Var "z"))) --> "x -> y -> z"
     write (TE (Fnc (Var "x") (Var "y")) (Var "z"))   --> "x -> y : z"
-    write (Fnc (Var "x") (Lam "y" (Var "z")))        --> "x -> (λy -> z)"
+    write (Fnc (Var "x") (Lam "y" (Var "z")))        --> "x -> (λy. z)"
 
     write (TE (Var "x") (App (Var "y") (Var "z")))  --> "x : y z"
     write (TE (Var "x") (exp (Var "y") (Var "z")))  --> "x : y ^ z"
@@ -351,15 +351,15 @@ read txt =
     write (TE (Var "x") (add (Var "y") (Var "z")))  --> "x : y + z"
     write (TE (Var "x") (Fnc (Var "y") (Var "z"))) --> "x : y -> z"
     write (TE (TE (Var "x") (Var "y")) (Var "z"))   --> "x : y : z"
-    write (TE (Var "x") (Lam "y" (Var "z")))        --> "x : (λy -> z)"
+    write (TE (Var "x") (Lam "y" (Var "z")))        --> "x : (λy. z)"
 
-    write (Lam "x" (App (Var "y") (Var "z")))  --> "λx -> y z"
-    write (Lam "x" (exp (Var "y") (Var "z")))  --> "λx -> y ^ z"
-    write (Lam "x" (mul (Var "y") (Var "z")))  --> "λx -> y * z"
-    write (Lam "x" (add (Var "y") (Var "z")))  --> "λx -> y + z"
-    write (Lam "x" (TE (Var "y") (Var "z")))   --> "λx -> y : z"
-    write (Lam "x" (Fnc (Var "y") (Var "z"))) --> "λx -> y -> z"
-    write (Lam "x" (Lam "y" (Var "z")))        --> "λx y -> z"
+    write (Lam "x" (App (Var "y") (Var "z")))  --> "λx. y z"
+    write (Lam "x" (exp (Var "y") (Var "z")))  --> "λx. y ^ z"
+    write (Lam "x" (mul (Var "y") (Var "z")))  --> "λx. y * z"
+    write (Lam "x" (add (Var "y") (Var "z")))  --> "λx. y + z"
+    write (Lam "x" (TE (Var "y") (Var "z")))   --> "λx. y : z"
+    write (Lam "x" (Fnc (Var "y") (Var "z")))  --> "λx. y -> z"
+    write (Lam "x" (Lam "y" (Var "z")))        --> "λx y. z"
 
     TODO: fix this!
     write (add (Var "x") (add (Var "y") (Var "z"))) -- "x + (y + z)"
@@ -386,11 +386,8 @@ write expr =
                 write e
     in
     case expr of
-        Typ [] ->
-            "Type"
-
-        Typ ctors ->
-            "%" ++ String.join " " ctors ++ "%"
+        Any ->
+            "@"
 
         Int k ->
             String.fromInt k
@@ -401,12 +398,18 @@ write expr =
         Var x ->
             x
 
+        Fnc t1 t2 ->
+            unop2 expr t1 ++ " -> " ++ unop1 expr t2
+
         Lam _ _ ->
-            tupleMap (\xs y -> "λ" ++ String.join " " xs ++ " -> " ++ write y)
+            tupleMap
+                (\xs y -> "λ" ++ String.join " " xs ++ ". " ++ write y)
                 (asFunc expr)
 
-        FrA _ _ ->
-            Debug.todo "write FrA"
+        For _ _ ->
+            tupleMap
+                (\xs y -> "∀" ++ String.join " " xs ++ ". " ++ write y)
+                (asForAll expr)
 
         App (Lam x e) (TE v t) ->
             x ++ " : " ++ write t ++ " = " ++ write v ++ "; " ++ write e
@@ -429,12 +432,6 @@ write expr =
         TE e t ->
             unop1 expr e ++ " : " ++ unop2 expr t
 
-        Fnc t1 t2 ->
-            unop2 expr t1 ++ " -> " ++ unop1 expr t2
-
-        Pos _ _ _ e ->
-            write e
-
 
 
 -- Syntax sugar
@@ -445,8 +442,8 @@ write expr =
     import Lambda
 
     Ok (func [] (Int 42))                --> read "42"
-    Ok (func [ "x" ] (Int 42))           --> read "λx -> 42"
-    Ok (func [ "x", "y", "z" ] (Int 42)) --> read "λx y z -> 42"
+    Ok (func [ "x" ] (Int 42))           --> read "λx. 42"
+    Ok (func [ "x", "y", "z" ] (Int 42)) --> read "λx y z. 42"
 
 -}
 func : List String -> Expr -> Expr
@@ -458,9 +455,9 @@ func inputs output =
 
     import Lambda
 
-    read "42" |> Result.map asFunc           --> Ok ( [], Int 42 )
-    read "λx -> 42" |> Result.map asFunc     --> Ok ( [ "x" ], Int 42 )
-    read "λx y z -> 42" |> Result.map asFunc --> Ok ( [ "x", "y", "z" ], Int 42 )
+    read "42" |> Result.map asFunc         --> Ok ( [], Int 42 )
+    read "λx. 42" |> Result.map asFunc     --> Ok ( [ "x" ], Int 42 )
+    read "λx y z. 42" |> Result.map asFunc --> Ok ( [ "x", "y", "z" ], Int 42 )
 
 -}
 asFunc : Expr -> ( List String, Expr )
@@ -476,6 +473,44 @@ asFunc expr =
                     ( xs, y0 )
     in
     asFunc_ [] expr
+
+
+{-|
+
+    import Lambda
+
+    Ok (forAll [] (Var "Int"))              --> read "Int"
+    Ok (forAll [ "a" ] (Var "a"))           --> read "∀a. a"
+    Ok (forAll [ "a", "b", "c" ] (Var "a")) --> read "∀a b c. a"
+
+-}
+forAll : List String -> Expr -> Expr
+forAll inputs output =
+    List.foldr For output inputs
+
+
+{-|
+
+    import Lambda
+
+    read "42" |> Result.map asForAll         --> Ok ( [], Int 42 )
+    read "∀x. 42" |> Result.map asForAll     --> Ok ( [ "x" ], Int 42 )
+    read "∀x y z. 42" |> Result.map asForAll --> Ok ( [ "x", "y", "z" ], Int 42 )
+
+-}
+asForAll : Expr -> ( List String, Expr )
+asForAll expr =
+    let
+        asForAll_ : List String -> Expr -> ( List String, Expr )
+        asForAll_ xs y0 =
+            case y0 of
+                For x y ->
+                    Tuple.mapFirst ((::) x) (asForAll_ xs y)
+
+                _ ->
+                    ( xs, y0 )
+    in
+    asForAll_ [] expr
 
 
 {-|
@@ -573,7 +608,7 @@ add x y =
 
     import Lambda
 
-    Ok (letVar "x" (Var "y") (Var "z"))                --> read "(λx -> z) y"
+    Ok (letVar "x" (Var "y") (Var "z"))                --> read "(λx. z) y"
     Ok (letVar "x" (Var "y") (Var "z"))                --> read "x := y; z"
     Ok (letVar "x" (TE (Var "y") (Var "a")) (Var "z")) --> read "x : a = y; z"
 
@@ -618,8 +653,11 @@ asConstructors expr typ =
     --> Dict.insert "x" (Var "y", Var "Int") newEnv.names
 
     -- The type can also be a type variable.
+    define "x" (TE (Var "y") (For "a" (Var "a"))) newEnv |> .names
+    --> Dict.insert "x" (Var "y", Var "a") newEnv.names
+
     define "x" (TE (Var "y") (Var "a")) newEnv |> .names
-    --> Dict.insert "x" (Var "y", TE (Var "a") (Var "Type")) newEnv.names
+    --> Dict.insert "x" (Var "y", Var "a") newEnv.names
 
 -}
 define : String -> Expr -> Env a -> Env a
@@ -627,10 +665,10 @@ define name value env =
     case value of
         TE expr typ ->
             andThen
-                (\( t, _ ) _ ->
+                (\t _ ->
                     { env | names = Dict.insert name ( expr, t ) env.names }
                 )
-                (evalType typ env)
+                (map Tuple.first (evalType typ env))
 
         _ ->
             map (tupleMap TE) (eval value env)
@@ -668,7 +706,7 @@ define_ =
         |> defineType ( "T", [] )
             [ ( "A", Var "T" ) ]
         |> writeDefinitions [ "T", "A" ]
-    --> [ "T : %A% = T"
+    --> [ "T : Type = T"
     --> , "A : T = A"
     --> ]
 
@@ -715,7 +753,7 @@ define_ =
 defineType : ( String, List Expr ) -> List ( String, Type ) -> Env a -> Env a
 defineType ( typeName, typeInputs ) constructors env =
     env
-        |> eval (funcType typeInputs (Typ (List.map Tuple.first constructors)))
+        |> eval (funcType typeInputs (Var "Type"))
         |> map Tuple.second
         |> andThen
             (\typeType env_ ->
@@ -733,121 +771,115 @@ defineType ( typeName, typeInputs ) constructors env =
     import DisjointSet
 
     -- Starts with "a".
-    newTypeVar newEnv |> .result --> Ok (TE (Var "a") (Var "Type"))
+    newTypeVar newEnv |> .result --> Ok (Var "a")
 
     -- Goes alphabetically if a type is already defined.
-    newTypeVar { newEnv | types = DisjointSet.add [ Var "a" ] DisjointSet.empty } |> .result --> Ok (TE (Var "b") (Var "Type"))
-    newTypeVar { newEnv | names = Dict.singleton "a" (Var "Type", Var "Type") } |> .result --> Ok (TE (Var "b") (Var "Type"))
+    newTypeVar { newEnv | names = Dict.singleton "a" (Var "a", Var "Type") } |> .result --> Ok (Var "b")
 
     -- Names can have multiple letters when a-z are all used up.
-    newTypeVar { newEnv | nameSeed = 1234 } |> .result --> Ok (TE (Var "ast") (Var "Type"))
+    newTypeVar { newEnv | nameSeed = 1234 } |> .result --> Ok (Var "ast")
 
 -}
 newTypeVar : Env a -> Env Type
 newTypeVar env =
-    let
-        maybeTypeName typ =
-            case typ of
-                Var t ->
-                    Just t
-
-                _ ->
-                    Nothing
-
-        existingNames =
-            List.filterMap maybeTypeName (DisjointSet.items env.types)
-                ++ Dict.keys env.names
-                |> Set.fromList
-    in
-    newVarName env.nameSeed existingNames
-        |> tupleMap
-            (\t newSeed ->
-                withValue (TE (Var t) (Var "Type"))
-                    { env | nameSeed = newSeed }
-            )
+    Dict.keys env.names
+        |> Set.fromList
+        |> newVarName env.nameSeed
+        |> tupleMap (\t seed -> withValue (Var t) { env | nameSeed = seed })
 
 
 {-| Evaluates an Expression.
 
     import Lambda
 
-    evalText : String -> Result Error (String, String)
-    evalText txt =
+    def : String -> String -> Env a -> Env a
+    def x y env =
+        withResult (read y) env
+            |> andThen (define x)
+            |> withResult env.result
+
+    evalExpr : String -> Result Error (String, String)
+    evalExpr txt =
         newEnv
-            |> withResult (read "42")
-            |> andThen (define "x")
-            |> withResult (read "y : Num")
-            |> andThen (define "y")
-            |> withResult (read "f : Int -> Num")
-            |> andThen (define "f")
-            |> withResult (read "g : a -> a")
-            |> andThen (define "g")
+            |> def "x" "42"
+            |> def "y" "y : Num"
+            |> def "f" "f : Int -> Num"
+            |> def "g" "g : ∀a. a -> a"
             |> withResult (read txt)
             |> andThen eval
             |> .result
             |> Result.map (Tuple.mapBoth write write)
 
+    -- Anything / free types / type variables
+    evalExpr "@" --> Ok ( "@", "Type" )
+
     -- Values
-    evalText "42"   --> Ok ( "42", "Int" )
-    evalText "3.14" --> Ok ( "3.14", "Num" )
+    evalExpr "42"   --> Ok ( "42", "Int" )
+    evalExpr "3.14" --> Ok ( "3.14", "Num" )
 
     -- Variables
-    evalText "x" --> Ok ( "42", "Int" )
-    evalText "y" --> Ok ( "y", "Num" )
-    evalText "z" --> Err (VariableNotFound (Var "z"))
-    evalText "f" --> Ok ( "f", "Int -> Num" )
-    evalText "g" --> Ok ( "g", "(a : Type) -> (a : Type)" )
-    evalText "h" --> Err (VariableNotFound (Var "h"))
-
-    -- Lambda abstraction
-    evalText "λx -> x" --> Ok ( "λx -> x", "(a : Type) -> (a : Type)" )
-    evalText "λx -> y" --> Ok ( "λx -> y", "(a : Type) -> Num" )
-    evalText "λy -> x" --> Ok ( "λy -> 42", "(a : Type) -> Int" )
-    evalText "λx -> z" --> Err (VariableNotFound (Var "z"))
-
-    -- Application
-    evalText "f x" --> Ok ( "f 42", "Num" )
-    evalText "f y" --> Err (TypeMismatch (Var "Num") (Var "Int"))
-    evalText "g x" --> Ok ( "g 42", "Int" )
-    evalText "g y" --> Ok ( "g y", "Num" )
-    evalText "h z" --> Err (VariableNotFound (Var "h"))
-    evalText "f z" --> Err (VariableNotFound (Var "z"))
-    evalText "(λx -> x) 42"    --> Ok ( "42", "Int" )
-    evalText "(λx -> 3.14) 42" --> Ok ( "3.14", "Num" )
+    evalExpr "x" --> Ok ( "42", "Int" )
+    evalExpr "y" --> Ok ( "y", "Num" )
+    evalExpr "z" --> Err (VariableNotFound (Var "z"))
+    evalExpr "f" --> Ok ( "f", "Int -> Num" )
+    evalExpr "g" --> Ok ( "g", "a -> a" )
+    evalExpr "h" -- Err (VariableNotFound (Var "h"))
 
     -- Function types
-    evalText "a -> b"  --> Ok ( "(a : Type) -> (b : Type)", "Type -> Type" )
-    evalText "a -> 42" --> Ok ( "(a : Type) -> 42", "Type -> Int" )
+    evalExpr "a -> 42"     --> Ok ( "a -> 42", "@ -> Int" )
+    evalExpr "42 -> a"     --> Ok ( "42 -> a", "Int -> @" )
+    evalExpr "a -> a"      --> Ok ( "a -> a", "@ -> @" )
+    evalExpr "a -> b"      --> Ok ( "a -> b", "@ -> @" )
+    evalExpr "a -> b -> c" --> Ok ( "a -> b -> c", "@ -> @ -> @" )
+
+    -- Lambda abstraction
+    evalExpr "λx. x" --> Ok ( "λx. x", "∀a. a -> a" )
+    evalExpr "λx. y" --> Ok ( "λx. y", "∀a. a -> Num" )
+    evalExpr "λy. x" --> Ok ( "λy. 42", "∀a. a -> Int" )
+    evalExpr "λx. z" --> Err (VariableNotFound (Var "z"))
+
+    -- Type abstraction
+    evalExpr "∀x. x" --> Ok ( "x", "@" )
+    evalExpr "∀x. y" --> Ok ( "y", "Num" )
+    evalExpr "∀y. x" --> Ok ( "42", "Int" )
+    evalExpr "∀x. x -> y" --> Ok ( "x -> y", "@ -> Num" )
+    evalExpr "∀x. z" --> Err (VariableNotFound (Var "z"))
+
+    -- Application
+    evalExpr "f x" --> Ok ( "f 42", "Num" )
+    evalExpr "f y" --> Err (TypeMismatch (Var "Num") (Var "Int"))
+    evalExpr "g x" --> Ok ( "g 42", "Int" )
+    evalExpr "g y" --> Ok ( "g y", "Num" )
+    evalExpr "h z" --> Err (VariableNotFound (Var "h"))
+    evalExpr "f z" --> Err (VariableNotFound (Var "z"))
+    evalExpr "(λx. x) 42"    --> Ok ( "42", "Int" )
+    evalExpr "(λx. 3.14) 42" --> Ok ( "3.14", "Num" )
 
     -- Typed Expression (lazy evaluation)
-    evalText "x : a" --> Ok ( "x", "a : Type" )
-    evalText "z : a" --> Ok ( "z", "a : Type" )
-
-    -- Type unions (TODO: define semantics for this)
-    evalText "1 | 2" -- Ok ( "1 | 2", "Num" )
-    evalText "42 | 3.14" -- Err (TypeMismatch (Var "Int") (Var "Num"))
-    evalText "Int | Num" -- Ok ( "Int | Num", "Type" )
-    evalText "A : Type | B : Type" -- Ok ( "A : Type | B : Type", "Type" )
+    evalExpr "x : Int" --> Ok ( "x", "Int" )
+    evalExpr "x : a"   --> Ok ( "x", "a" )
+    evalExpr "z : a"   --> Ok ( "z", "a" )
 
     -- Variable definitions (inferred by lowercase name)
-    evalText "x := 42; x"   --> Ok ( "42", "Int" )
-    evalText "x : a = y; x" --> Ok ( "y", "Num" )
+    evalExpr "x := 42; x"   -- Ok ( "42", "Int" )
+    evalExpr "x : a = y; x" -- Ok ( "y", "Num" )
 
     -- Named type definitions (inferred by uppercase name)
     -- Undefined names are defined as constructors.
-    evalText "Maybe a := Just a | Nothing; Just 42" -- Ok ( "Just 42", "Maybe Int" )
-    evalText "Maybe a := Just a | Nothing; Nothing" -- Ok ( "Nothing", "Maybe a" )
+    evalExpr "Maybe a := Just a | Nothing; Just 42" -- Ok ( "Just 42", "Maybe Int" )
+    evalExpr "Maybe a := Just a | Nothing; Nothing" -- Ok ( "Nothing", "Maybe a" )
 
     -- Case application
-    evalText "Bool := True | False; True 1 2" -- Ok ( "1", "Int" )
-    evalText "Bool := True | False; False 1 2" -- Ok ( "2", "Int" )
+    evalExpr "Bool := True | False; True 1 2" -- Ok ( "1", "Int" )
+    evalExpr "Bool := True | False; False 1 2" -- Ok ( "2", "Int" )
 
 -}
 eval : Expr -> Env a -> Env ( Expr, Type )
 eval expr env =
+    -- TODO: make tests that actually ensure the Env semantics
     case expr of
-        Typ _ ->
-            withValue ( expr, expr ) env
+        Any ->
+            withValue ( Any, Var "Type" ) env
 
         Int _ ->
             withValue ( expr, Var "Int" ) env
@@ -858,10 +890,8 @@ eval expr env =
         Var x ->
             case Dict.get x env.names of
                 Just ( value, typ ) ->
-                    if typ == Var "Type" then
-                        withValue ( expr, typ ) env
-
-                    else if value == Var x then
+                    if value == Var x then
+                        -- Tautology: (x : T) = (x : T)
                         withValue ( value, typ ) env
 
                     else
@@ -873,25 +903,50 @@ eval expr env =
                 Nothing ->
                     withError (VariableNotFound (Var x)) env
 
-        -- Lam x (TE y yType) ->
-        --     andThen2
-        --         (\yT xT env_ ->
-        --             define x (TE (Var x) xT) env_
-        --                 |> withValue ( Lam x y, Fnc xT yT )
-        --         )
-        --         (evalType yType env)
-        --         newTypeVar
-        Lam x y ->
-            andThen
-                (\xT env_ ->
-                    define x (TE (Var x) xT) env_
-                        |> eval_ y
-                        |> map (Tuple.mapBoth (Lam x) (Fnc xT))
-                )
-                (newTypeVar env)
+        Fnc t1 t2 ->
+            -- a -> 42 ==> (∀a. a -> 42) : (Type -> Int)
+            -- 42 -> a ==> (∀a. 42 -> a) : (Int -> Type)
+            -- a -> b  ==> (∀a b. a -> b) : (Type -> Type)
+            map2
+                (\( x, xt ) ( y, yt ) ->
+                    let
+                        ( xVars, xDef ) =
+                            asForAll x
 
-        FrA a b ->
-            Debug.todo "eval FrA"
+                        ( yVars, yDef ) =
+                            asForAll y
+                    in
+                    ( forAll (xVars ++ yVars) (Fnc xDef yDef), Fnc xt yt )
+                )
+                (evalType t1 env)
+                (evalType t2)
+
+        Lam x y ->
+            -- (λx. x)  ==> (λx. x)  : (∀a. a -> a)
+            -- (λx. 42) ==> (λx. 42) : (∀a. a -> Int)
+            let
+                xT =
+                    Dict.keys env.names
+                        |> Set.fromList
+                        |> newVarName env.nameSeed
+                        |> Tuple.first
+            in
+            env
+                |> eval_ (For xT (Var xT))
+                |> define x (TE (Var x) (Var xT))
+                |> eval_ y
+                |> map
+                    (Tuple.mapBoth
+                        (Lam x)
+                        (\yT -> For xT (Fnc (Var xT) yT))
+                    )
+
+        For x y ->
+            -- a      ==> (∀a. a) : *
+            -- a -> a ==> (∀a. a -> a) : * -> *
+            env
+                |> define x (TE (Var x) Any)
+                |> eval_ y
 
         -- Type definition
         App ((Lam x y) as e1) ((TE def typ) as e2) ->
@@ -911,30 +966,10 @@ eval expr env =
         App e1 e2 ->
             apply e1 e2 env
 
-        -- exp (Int e1) (Int e2) ->
-        --     eval (Int (e1 ^ e2)) env
-        -- exp (Num e1) (Num e2) ->
-        --     eval (Num (e1 ^ e2)) env
-        -- exp e1 e2 ->
-        --     Debug.todo "eval exp"
-        -- mul e1 e2 ->
-        --     Debug.todo "eval mul"
-        -- add e1 e2 ->
-        --     Debug.todo "eval add"
         TE e t ->
             evalType t env
                 |> map Tuple.first
                 |> map (Tuple.pair e)
-
-        -- Or e1 e2 ->
-        --     Debug.todo "eval Or"
-        Fnc t1 t2 ->
-            map2 (\( x, xt ) ( y, yt ) -> ( Fnc x y, Fnc xt yt ))
-                (evalType t1 env)
-                (evalType t2)
-
-        Pos source start end e ->
-            Debug.todo "eval Pos"
 
 
 apply : Expr -> Expr -> Env a -> Env ( Expr, Type )
@@ -972,54 +1007,46 @@ eval_ =
     eval
 
 
-{-| Evaluates a type Expression.
+{-| Evaluates a type expression.
 
-    env : Env ()
-    env =
+    def : String -> String -> Env a -> Env a
+    def x y env =
+        withResult (read y) env
+            |> andThen (define x)
+            |> withResult env.result
+
+    evalTyp : String -> Result Error (String, String)
+    evalTyp txt =
         newEnv
-            |> define "x" (Int 42)
-            |> defineType ( "Bool", [] )
-                [ ( "True", Var "Bool" )
-                , ( "False", Var "Bool" )
-                ]
-            -- |> defineType ( "Maybe", [ Var "a" ] )
-            --     [ ( "Just", funcType [ Var "a" ] (App (Var "Maybe") (Var "a")) ]
-            --     , ( "Nothing", [], App (Var "Maybe") (Var "a") )
-            --     ]
+            |> def "x" "42"
+            |> def "y" "y : Num"
+            |> def "f" "f : Int -> Num"
+            |> def "g" "g : a -> a"
+            |> withResult (read txt)
+            |> andThen evalType
+            |> .result
+            |> Result.map (Tuple.mapBoth write write)
 
-    -- If a name doesn't exist, it's interpreted as a type variable.
-    -- Type variables look like (TE (Var name) type)
-    evalType (TE (Var "a") (Var "Type")) env |> .result --> Ok (TE (Var "a") (Var "Type"), Var "Type")
-    evalType (TE (Var "a") (Var "Int")) env |> .result  --> Ok (TE (Var "a") (Var "Int"), Var "Int")
-    evalType (Var "a") env |> .result                   --> Ok (TE (Var "a") (Var "Type"), Var "Type")
+    -- Values
+    evalTyp "42"   --> Ok ( "42", "Int" )
+    evalTyp "3.14" --> Ok ( "3.14", "Num" )
 
-    -- Any valid Expression can be a valid type.
-    evalType (Int 42) env |> .result     --> Ok (Int 42, Var "Int")
-    evalType (Var "x") env |> .result    --> Ok (Int 42, Var "Int")
-    evalType (Var "Int") env |> .result  --> Ok (Var "Int", Var "Type")
-    evalType (Var "Bool") env |> .result --> Ok (Var "Bool", Typ [ "True", "False" ])
-    evalType (Var "True") env |> .result --> Ok (Var "True", Var "Bool")
-    evalType (App (Var "Maybe") (Var "Int")) env |> .result -- Ok (App (Var "Maybe") (Var "Int"), Var "Type")
-    evalType (App (Var "Just") (Var "x")) env |> .result    -- Ok (App (Var "Just") (Int 42), App (Var "Maybe") (Var "Int"))
+    -- Variables
+    evalTyp "x" --> Ok ( "42", "Int" )
+    evalTyp "y" --> Ok ( "y", "Num" )
+    evalTyp "z" --> Ok ( "z", "@" )
 
 -}
 evalType : Type -> Env a -> Env ( Type, Type )
 evalType typ env =
     case typ of
         Var x ->
-            if Dict.member x env.names then
-                eval typ env
+            case Dict.get x env.names of
+                Just _ ->
+                    eval typ env
 
-            else
-                DisjointSet.find typ env.types
-                    |> Maybe.map (\t -> eval t env)
-                    |> Maybe.withDefault
-                        -- (withValue ( typ, typ ) env)
-                        (withValue ( TE typ (Var "Type"), Var "Type" ) env)
-
-        -- Type variable
-        TE (Var _) t ->
-            withValue ( typ, t ) env
+                Nothing ->
+                    eval (For x typ) env
 
         _ ->
             eval typ env
@@ -1029,48 +1056,59 @@ evalType typ env =
 
     import Lambda
 
-    -- Bound types
-    unify (Var "Int") (Var "Int") newEnv |> .result --> Ok (Var "Int")
+    -- Named types
+    unify (Var "Int") (Var "Int") newEnv |> .result --> Ok (Var "Int", Var "Type")
     unify (Var "Int") (Var "Num") newEnv |> .result --> Err (TypeMismatch (Var "Int") (Var "Num"))
 
     -- Type variables
-    unify (Var "a") (Var "a") newEnv |> .result --> Ok (TE (Var "a") (Var "Type"))
-    unify (Var "a") (Var "b") newEnv |> .result --> Ok (TE (Var "a") (Var "Type"))
+    unify (Var "a") (Var "a") newEnv |> .result --> Ok (Var "a", Any)
+    unify (Var "a") (Var "b") newEnv |> .result --> Ok (Var "a", Any)
 
-    -- Bound types with type variables
-    unify (Var "Int") (Var "a") newEnv |> .result --> Ok (Var "Int")
-    unify (Var "a") (Var "Int") newEnv |> .result --> Ok (Var "Int")
+    -- Named types with type variables
+    unify (Var "Int") (Var "a") newEnv |> .result --> Ok (Var "Int", Var "Type")
+    unify (Var "a") (Var "Int") newEnv |> .result --> Ok (Var "Int", Var "Type")
 
-    -- Lamtraction types
-    unify (Fnc (Var "Int") (Var "Num")) (Fnc (Var "Int") (Var "Num")) newEnv |> .result -- Ok (Fnc (Var "Int") (Var "Num"))
-    unify (Fnc (Var "Int") (Var "Num")) (Var "a") newEnv |> .result                      -- Ok (Fnc (Var "Int") (Var "Num"))
-    unify (Var "a") (Fnc (Var "Int") (Var "Num")) newEnv |> .result                      -- Ok (Fnc (Var "Int") (Var "Num"))
-    unify (Fnc (Var "Int") (Var "Num")) (Fnc (Var "a") (Var "b")) newEnv |> .result     -- Ok (Fnc (Var "Int") (Var "Num"))
-    unify (Fnc (Var "a") (Var "b")) (Fnc (Var "Int") (Var "Num")) newEnv |> .result     -- Ok (Fnc (Var "Int") (Var "Num"))
+    -- Function types
+    unify (Fnc (Var "Int") (Var "Num")) (Fnc (Var "Int") (Var "Num")) newEnv |> .result --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+    unify (Fnc (Var "Int") (Var "Num")) (Var "a") newEnv |> .result                     --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+    unify (Var "a") (Fnc (Var "Int") (Var "Num")) newEnv |> .result                     --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+
+    unify (Fnc (Var "Int") (Var "Num")) (Fnc (Var "a") (Var "b")) newEnv |> .result     --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+    unify (Fnc (Var "Int") (Var "Num")) (Fnc (Var "a") (Var "Num")) newEnv |> .result   --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+    unify (Fnc (Var "Int") (Var "Num")) (Fnc (Var "Int") (Var "b")) newEnv |> .result   --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+    unify (Fnc (Var "Int") (Var "Num")) (Fnc (Var "Num") (Var "b")) newEnv |> .result   --> Err (TypeMismatch (Var "Int") (Var "Num"))
+    unify (Fnc (Var "Int") (Var "Num")) (Fnc (Var "a") (Var "Int")) newEnv |> .result   --> Err (TypeMismatch (Var "Num") (Var "Int"))
+
+    unify (Fnc (Var "a") (Var "b")) (Fnc (Var "Int") (Var "Num")) newEnv |> .result     --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+    unify (Fnc (Var "a") (Var "Num")) (Fnc (Var "Int") (Var "Num")) newEnv |> .result   --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+    unify (Fnc (Var "Int") (Var "b")) (Fnc (Var "Int") (Var "Num")) newEnv |> .result   --> Ok (Fnc (Var "Int") (Var "Num"), Fnc (Var "Type") (Var "Type"))
+    unify (Fnc (Var "Num") (Var "b")) (Fnc (Var "Int") (Var "Num")) newEnv |> .result   --> Err (TypeMismatch (Var "Num") (Var "Int"))
+    unify (Fnc (Var "a") (Var "Int")) (Fnc (Var "Int") (Var "Num")) newEnv |> .result   --> Err (TypeMismatch (Var "Int") (Var "Num"))
+
+    unify (Fnc (Var "a") (Var "b")) (Fnc (Var "c") (Var "Int")) newEnv |> .result     --> Ok (Fnc (Var "a") (Var "Int"), Fnc Any (Var "Type"))
+    unify (Fnc (Var "c") (Var "Int")) (Fnc (Var "a") (Var "b")) newEnv |> .result     --> Ok (Fnc (Var "c") (Var "Int"), Fnc Any (Var "Type"))
 
 -}
-unify : Type -> Type -> Env a -> Env Type
+unify : Type -> Type -> Env a -> Env ( Type, Type )
 unify type1 type2 env =
     andThen2
-        (\( t1, _ ) ( t2, _ ) env_ ->
-            case ( t1, t2 ) of
-                ( Fnc a1 b1, Fnc a2 b2 ) ->
-                    map2 Fnc
+        (\typ1 typ2 env_ ->
+            case ( typ1, typ2 ) of
+                ( ( Fnc a1 b1, _ ), ( Fnc a2 b2, _ ) ) ->
+                    map2 (\( a, aT ) ( b, bT ) -> ( Fnc a b, Fnc aT bT ))
                         (unify_ a1 a2 env_)
                         (unify_ b1 b2)
 
-                ( _, TE (Var _) _ ) ->
-                    -- Bind the type variable `t2` to `t1`.
-                    -- `unify a b` should return `a`.
-                    withValue t1
+                ( ( t1, _ ), ( t2, Any ) ) ->
+                    withValue typ1
                         { env_ | types = DisjointSet.union t1 t2 env_.types }
 
-                ( TE (Var _) _, _ ) ->
-                    unify t2 t1 env
+                ( ( t1, Any ), ( t2, _ ) ) ->
+                    unify_ t2 t1 env_
 
-                _ ->
-                    if t1 == t2 then
-                        withValue t1 env
+                ( ( t1, _ ), ( t2, _ ) ) ->
+                    if typ1 == typ2 then
+                        withValue typ1 env
 
                     else
                         withError (TypeMismatch t1 t2) env
@@ -1079,7 +1117,7 @@ unify type1 type2 env =
         (evalType type2)
 
 
-unify_ : Type -> Type -> Env a -> Env Type
+unify_ : Type -> Type -> Env a -> Env ( Type, Type )
 unify_ =
     -- Workaround for: https://github.com/elm/compiler/issues/2186
     unify
@@ -1111,7 +1149,6 @@ andThen2 :
     -> (Env a -> Env b)
     -> Env c
 andThen2 f env envAB =
-    -- TODO: change to andThen2 : (a -> .. -> Env c) -> (Env a -> Env b) -> (Env b -> Env c) -> Env a -> Env c
     andThen (\x envA -> andThen (f x) (envAB envA)) env
 
 
@@ -1259,7 +1296,23 @@ exprP =
                             |> drop spaces
                         )
                     )
-                |> drop (text "->")
+                |> drop (text ".")
+                |> drop spaces
+                |> take (lazy (\_ -> exprP))
+
+        forAllP : Parser Expr
+        forAllP =
+            succeed forAll
+                |> drop (char '∀')
+                |> drop spaces
+                |> take
+                    (oneOrMore
+                        (succeed identity
+                            |> take identifierP
+                            |> drop spaces
+                        )
+                    )
+                |> drop (text ".")
                 |> drop spaces
                 |> take (lazy (\_ -> exprP))
 
@@ -1300,10 +1353,12 @@ exprP =
         -- , [ fromLeft Or (text "|") ]
         , [ inbetween identity (char '(') (char ')')
           , term identity funcP
+          , term identity forAllP
           , term identity letVarP
           , term Int int
           , term Num number
           , term Var identifierP
+          , term (\_ -> Any) (char '@')
           ]
         ]
 
@@ -1314,7 +1369,7 @@ precedence expr =
     --       both for readers/parsers and writers/formatters.
     case expr of
         -- TODO: adjust these 100s
-        Typ _ ->
+        Any ->
             100
 
         Int _ ->
@@ -1349,8 +1404,5 @@ precedence expr =
         Lam _ _ ->
             0
 
-        FrA _ _ ->
+        For _ _ ->
             0
-
-        Pos _ _ _ e ->
-            precedence e

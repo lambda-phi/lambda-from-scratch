@@ -25,9 +25,9 @@ readWrite "3.14" --> Ok "3.14"
 readWrite "x" --> Ok "x"
 
 -- Lambda abstraction
-readWrite "λx -> y"       --> Ok "λx -> y"
-readWrite "λx y -> z"     --> Ok "λx y -> z"
-readWrite "λx -> λy -> z" --> Ok "λx y -> z"
+readWrite "λx. y"     --> Ok "λx. y"
+readWrite "λx y. z"   --> Ok "λx y. z"
+readWrite "λx. λy. z" --> Ok "λx y. z"
 
 -- Application
 readWrite "f x"   --> Ok "f x"
@@ -42,7 +42,7 @@ readWrite "x : Maybe a" --> Ok "x : Maybe a"
 readWrite "a -> b" --> Ok "a -> b"
 
 -- Variable definitions
-readWrite "(λx -> z) y"     --> Ok "x := y; z"
+readWrite "(λx. z) y"       --> Ok "x := y; z"
 readWrite "x := y; z"       --> Ok "x := y; z"
 readWrite "x := (y : a); z" --> Ok "x : a = y; z"
 readWrite "x : a = y; z"    --> Ok "x : a = y; z"
