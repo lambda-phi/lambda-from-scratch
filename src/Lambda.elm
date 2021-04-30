@@ -36,73 +36,7 @@ module Lambda exposing
 
 TODO: validate that this Elm issue works: <https://github.com/elm/compiler/issues/2186>
 
-Practical Implementation of a Dependently Typed Functional Programming Language:
-<https://eb.host.cs.st-andrews.ac.uk/writings/thesis.pdf>
-
-
-## Type Theory expressions
-
-    type t
-        = *i               -- type universes
-        | x                -- variable
-        | c                -- constructor
-        | ∀x:t. t          -- function space
-        | λx:t. t          -- abstraction
-        | t t              -- application
-        | let x:t = t in t -- let binding
-
-
-## Contractions
-
-β−contraction: substitutes a value applied to a λ-binding for the bound variable
-in the scope of that binding.
-Γ ⊢ (λx:S. t) s ⇒ let x:S = s in t
-
-η-contraction: eliminates redundant λ abstractions
-Γ ⊢ λx:S. f x ⇒ f
-
-δ-contraction: replaces a let bound variable by its value
-Γ{x:S = s} ⊢ x ⇒ s
-
-
-## Type checking
-
-Notation (modified): <https://en.wikipedia.org/wiki/Type_rule>
-
-    Type
-        if   Γ ⊢ valid
-        then Γ ⊢ *n : *n+1
-
-    Var
-        if   Γ{x:S} ⊢ valid
-        then Γ{x:S} ⊢ x : S
-
-    Val
-        if   Γ{x:S = s} ⊢ valid
-        then Γ{x:S = s} ⊢ x : S
-
-    App
-        if   Γ ⊢ f : (∀x:S. T)
-             Γ ⊢ s : S
-        then Γ ⊢ f s : (let x:S = s in T)
-             Γ ⊢ f s : ((\x:S. T) s)
-
-    Lam
-        if   Γ{x:S} ⊢ y : T
-             Γ ⊢ (∀x:S. T) : *n
-        then Γ ⊢ (λx. y) : (∀a b. a -> b)
-
-    ForAll
-        if   Γ{x:S} ⊢ T : *n
-             Γ ⊢ S : *n
-        then Γ ⊢ ∀x:S. T : *n
-
-    Let
-        if   Γ ⊢ e1 : S
-             Γ{x:S = e1} ⊢ e2 : T
-             Γ ⊢ S : *n
-             Γ{x:S = e1} ⊢ T : *n
-        then Γ ⊢ let x:S = e1 in e2 : (let x:S = e1 in T)
+[Calculus of constructions](https://en.wikipedia.org/wiki/Calculus_of_constructions)
 
 -}
 
@@ -127,11 +61,16 @@ type Expr
     | Int Int -- 42             integer value
     | Num Float -- 3.14         number value / floating point value
     | Var String -- x           variable
-    | Fnc Type Type -- a -> b   function type
-    | Lam String Expr -- λx. y  lambda abstraction
+    | Lam String Expr -- λx. y  lambda abstraction / function definition
     | For String Type -- ∀a. b  for all types / type abstraction
-    | App Expr Expr -- f x      application
+    | App Expr Expr -- f x      application / function call
+    | Fnc Type Type -- a -> b   function type
     | TE Expr Type -- x : a     typed expression
+
+
+
+-- TODO: add some sort of type definition expression
+-- | LetType String (List Expr) ( String, Type ) (List ( String, Type )) Expr
 
 
 {-| Types are just Expressions, and any valid Expression is a valid type.
@@ -660,21 +599,6 @@ letVar name value expr =
     App (Lam name expr) value
 
 
-asConstructors : Expr -> Type -> List ( String, Type )
-asConstructors expr typ =
-    case asCall expr of
-        -- ( Or x1 x2, [] ) ->
-        --     asConstructors x1 typ ++ asConstructors x2 typ
-        ( TE x t, [] ) ->
-            asConstructors x t
-
-        ( Var x, types ) ->
-            [ ( x, funcType types typ ) ]
-
-        _ ->
-            [ ( "", typ ) ]
-
-
 {-| Define a new variable in an `Env`.
 
     import Dict
@@ -696,10 +620,10 @@ asConstructors expr typ =
 
     -- The type can also be a type variable.
     define "x" (TE (Var "y") (For "a" (Var "a"))) newEnv |> .names
-    --> Dict.insert "x" (Var "y", Var "a") newEnv.names
+    --> Dict.insert "x" (Var "y", For "a" (Var "a")) newEnv.names
 
     define "x" (TE (Var "y") (Var "a")) newEnv |> .names
-    --> Dict.insert "x" (Var "y", Var "a") newEnv.names
+    --> Dict.insert "x" (Var "y", For "a" (Var "a")) newEnv.names
 
 -}
 define : String -> Expr -> Env a -> Env a
@@ -841,15 +765,8 @@ defineType ( typeName, typeInputs ) constructors env =
     evalExpr "y" --> Ok ( "y", "Num" )
     evalExpr "z" --> Err (VariableNotFound (Var "z"))
     evalExpr "f" --> Ok ( "f", "Int -> Num" )
-    evalExpr "g" --> Ok ( "g", "a -> a" )
+    evalExpr "g" --> Ok ( "g", "∀a. a -> a" )
     evalExpr "h" -- Err (VariableNotFound (Var "h"))
-
-    -- Function types
-    evalExpr "a -> 42"     --> Ok ( "a -> 42", "@ -> Int" )
-    evalExpr "42 -> a"     --> Ok ( "42 -> a", "Int -> @" )
-    evalExpr "a -> a"      --> Ok ( "a -> a", "@ -> @" )
-    evalExpr "a -> b"      --> Ok ( "a -> b", "@ -> @" )
-    evalExpr "a -> b -> c" --> Ok ( "a -> b -> c", "@ -> @ -> @" )
 
     -- Lambda abstraction
     evalExpr "λx. x" --> Ok ( "λx. x", "∀a. a -> a" )
@@ -858,11 +775,11 @@ defineType ( typeName, typeInputs ) constructors env =
     evalExpr "λx. z" --> Err (VariableNotFound (Var "z"))
 
     -- Type abstraction
-    evalExpr "∀x. x" --> Ok ( "x", "@" )
+    evalExpr "∀x. x" --> Ok ( "∀x. x", "@" )
     evalExpr "∀x. y" --> Ok ( "y", "Num" )
     evalExpr "∀y. x" --> Ok ( "42", "Int" )
-    evalExpr "∀x. x -> y" --> Ok ( "x -> y", "@ -> Num" )
     evalExpr "∀x. z" --> Err (VariableNotFound (Var "z"))
+    evalExpr "∀x x x. x" --> Ok ( "∀x. x", "@" )
 
     -- Application
     evalExpr "f x" --> Ok ( "f 42", "Num" )
@@ -874,17 +791,28 @@ defineType ( typeName, typeInputs ) constructors env =
     evalExpr "(λx. x) 42"    --> Ok ( "42", "Int" )
     evalExpr "(λx. 3.14) 42" --> Ok ( "3.14", "Num" )
 
+    -- Function types
+    evalExpr "a -> 42"        --> Ok ( "∀a. a -> 42", "@ -> Int" )
+    evalExpr "42 -> a"        --> Ok ( "∀a. 42 -> a", "Int -> @" )
+    evalExpr "a -> a"         --> Ok ( "∀a. a -> a", "@ -> @" )
+    evalExpr "a -> b"         --> Ok ( "∀a b. a -> b", "@ -> @" )
+    evalExpr "a -> b -> c"    --> Ok ( "∀a b c. a -> b -> c", "@ -> @ -> @" )
+    evalExpr "∀a. a -> y"     --> Ok ( "∀a. a -> y", "@ -> Num" )
+    evalExpr "∀a. a -> b"     --> Ok ( "∀a b. a -> b", "@ -> @" )
+
+    -- TODO
+    evalExpr "∀a. a -> ∀a. a" -- (?) should this be (∀a. a -> a) or (∀a b. a -> b) ?
+    evalExpr "∀a b. a b"      -- (?) is this even allowed?
+
     -- Typed Expression (lazy evaluation to allow for recursive calls)
     evalExpr "x : Int"   --> Ok ( "x", "Int" )
-    evalExpr "x : ∀a. a" --> Ok ( "x", "a" )
-    evalExpr "x : a"     --> Ok ( "x", "a" )
-    evalExpr "z : a"     --> Ok ( "z", "a" ) -- ok, even if `z` isn't defined yet
+    evalExpr "x : ∀a. a" --> Ok ( "x", "∀a. a" )
+    evalExpr "x : a"     --> Ok ( "x", "∀a. a" )
+    evalExpr "z : a"     --> Ok ( "z", "∀a. a" ) -- ok, even if `z` isn't defined yet
 
     -- Variable definitions
     evalExpr "x := 42; x"   --> Ok ( "42", "Int" )
     evalExpr "x : a = y; x" --> Ok ( "y", "Num" )
-
-    --
 
     -- Type definitions
     evalExpr "$Maybe a = Just a | Nothing; Just 42" -- Ok ( "Just 42", "Maybe Int" )
@@ -897,7 +825,8 @@ defineType ( typeName, typeInputs ) constructors env =
 -}
 eval : Expr -> Env a -> Env ( Expr, Type )
 eval expr env =
-    -- TODO: make tests that actually ensure the Env semantics
+    -- TODO: make tests that actually ensure the Env semantics,
+    -- like defined names and equivalent types after unification.
     case expr of
         Any ->
             withValue ( Any, Var "Type" ) env
@@ -912,7 +841,6 @@ eval expr env =
             case Dict.get x env.names of
                 Just ( value, typ ) ->
                     if value == Var x then
-                        -- Tautology: (x : T) = (x : T)
                         withValue ( value, typ ) env
 
                     else
@@ -924,27 +852,7 @@ eval expr env =
                 Nothing ->
                     withError (VariableNotFound (Var x)) env
 
-        Fnc t1 t2 ->
-            -- a -> 42 ==> (∀a. a -> 42) : (Type -> Int)
-            -- 42 -> a ==> (∀a. 42 -> a) : (Int -> Type)
-            -- a -> b  ==> (∀a b. a -> b) : (Type -> Type)
-            map2
-                (\( x, xt ) ( y, yt ) ->
-                    let
-                        ( xVars, xDef ) =
-                            asForAll x
-
-                        ( yVars, yDef ) =
-                            asForAll y
-                    in
-                    ( forAll (xVars ++ yVars) (Fnc xDef yDef), Fnc xt yt )
-                )
-                (evalType t1 env)
-                (evalType t2)
-
         Lam x y ->
-            -- (λx. x)  ==> (λx. x)  : (∀a. a -> a)
-            -- (λx. 42) ==> (λx. 42) : (∀a. a -> Int)
             let
                 -- TODO: use newTypeVar
                 xT =
@@ -964,32 +872,72 @@ eval expr env =
                     )
 
         For x y ->
-            -- a      ==> (∀a. a) : *
-            -- a -> a ==> (∀a. a -> a) : * -> *
             env
                 |> define x (TE (Var x) Any)
                 |> eval_ y
+                |> map
+                    (Tuple.mapFirst
+                        (if isVarInExpr x y then
+                            For x
 
-        -- -- Type definition
-        -- App ((Lam x y) as e1) ((TE def typ) as e2) ->
-        --     let
-        --         ( inputTypes, outputType ) =
-        --             asFuncType typ
-        --     in
-        --     if outputType == Var "Type" then
-        --         env
-        --             |> defineType ( x, inputTypes )
-        --                 (asConstructors def (call (Var x) inputTypes))
-        --             |> eval_ y
-        --     else
-        --         apply e1 e2 env
+                         else
+                            identity
+                        )
+                    )
+
         App e1 e2 ->
             apply e1 e2 env
+
+        Fnc t1 t2 ->
+            map2
+                (\( x, xt ) ( y, yt ) ->
+                    let
+                        ( xVars, xDef ) =
+                            asForAll x
+
+                        ( yVars, yDef ) =
+                            asForAll y
+                    in
+                    ( forAll (xVars ++ yVars) (Fnc xDef yDef), Fnc xt yt )
+                )
+                (evalType t1 env)
+                (evalType t2)
 
         TE e t ->
             evalType t env
                 |> map Tuple.first
                 |> map (Tuple.pair e)
+
+
+isVarInExpr : String -> Expr -> Bool
+isVarInExpr name expr =
+    case expr of
+        Any ->
+            False
+
+        Int _ ->
+            False
+
+        Num _ ->
+            False
+
+        Var x ->
+            x == name
+
+        Lam x y ->
+            x /= name && isVarInExpr name y
+
+        For x y ->
+            x /= name && isVarInExpr name y
+
+        App e1 e2 ->
+            isVarInExpr name e1 || isVarInExpr name e2
+
+        Fnc t1 t2 ->
+            isVarInExpr name t1 || isVarInExpr name t2
+
+        TE e t ->
+            isVarInExpr name e || isVarInExpr name t
 
 
 apply : Expr -> Expr -> Env a -> Env ( Expr, Type )
@@ -1054,7 +1002,7 @@ eval_ =
     -- Variables
     evalTyp "x" --> Ok ( "42", "Int" )
     evalTyp "y" --> Ok ( "y", "Num" )
-    evalTyp "z" --> Ok ( "z", "@" )
+    evalTyp "z" --> Ok ( "∀z. z", "@" )
 
 -}
 evalType : Type -> Env a -> Env ( Type, Type )
@@ -1118,6 +1066,12 @@ unify type1 type2 env =
                     map2 (\( a, aT ) ( b, bT ) -> ( Fnc a b, Fnc aT bT ))
                         (unify_ a1 a2 env_)
                         (unify_ b1 b2)
+
+                ( ( For _ t1, _ ), ( t2, _ ) ) ->
+                    unify_ t1 t2 env_
+
+                ( ( t1, _ ), ( For _ t2, _ ) ) ->
+                    unify_ t1 t2 env_
 
                 ( ( t1, _ ), ( t2, Any ) ) ->
                     withValue typ1
