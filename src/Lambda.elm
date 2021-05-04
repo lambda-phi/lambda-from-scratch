@@ -144,8 +144,8 @@ newEnv =
     read "x : a" --> Ok (TE (Var "x") (Var "a"))
 
     -- Variable definitions
-    read "x := y; z"    --> Ok (letVar "x" (Var "y") (Var "z"))
-    read "x : a = y; z" --> Ok (letVar "x" (TE (Var "y") (Var "a")) (Var "z"))
+    read "x := y; z"    --> Ok (App (Lam "x" (Var "z")) (Var "y"))
+    read "x : a = y; z" --> Ok (App (Lam "x" (Var "z")) (TE (Var "y") (Var "a")))
 
     -- Operator precedence
     read "x y z"    --> Ok (App (App (Var "x") (Var "y")) (Var "z"))
@@ -286,7 +286,7 @@ read txt =
     write (Fnc (Var "x") (add (Var "y") (Var "z"))) --> "x -> y + z"
     write (Fnc (Var "x") (Fnc (Var "y") (Var "z"))) --> "x -> y -> z"
     write (TE (Fnc (Var "x") (Var "y")) (Var "z"))  --> "x -> y : z"
-    write (Fnc (Var "x") (Lam "y" (Var "z")))       --> "x -> (λy. z)"
+    write (Fnc (Var "x") (Lam "y" (Var "z")))       --> "x -> λy. z"
 
     write (TE (Var "x") (App (Var "y") (Var "z"))) --> "x : y z"
     write (TE (Var "x") (exp (Var "y") (Var "z"))) --> "x : y ^ z"
@@ -294,7 +294,7 @@ read txt =
     write (TE (Var "x") (add (Var "y") (Var "z"))) --> "x : y + z"
     write (TE (Var "x") (Fnc (Var "y") (Var "z"))) --> "x : y -> z"
     write (TE (TE (Var "x") (Var "y")) (Var "z"))  --> "x : y : z"
-    write (TE (Var "x") (Lam "y" (Var "z")))       --> "x : (λy. z)"
+    write (TE (Var "x") (Lam "y" (Var "z")))       --> "x : λy. z"
 
     write (Lam "x" (App (Var "y") (Var "z"))) --> "λx. y z"
     write (Lam "x" (exp (Var "y") (Var "z"))) --> "λx. y ^ z"
@@ -314,17 +314,17 @@ write expr =
         precedence : Expr -> Int
         precedence e =
             case e of
-                Lam _ _ ->
-                    0
-
-                For _ _ ->
-                    0
-
                 TE _ _ ->
-                    1
+                    0
 
                 Fnc _ _ ->
-                    2
+                    1
+
+                Lam _ _ ->
+                    1
+
+                For _ _ ->
+                    1
 
                 App (App (Var "+") _) _ ->
                     3
@@ -801,7 +801,7 @@ defineType ( typeName, typeInputs ) constructors env =
     evalExpr "∀a. a -> b"     --> Ok ( "∀a b. a -> b", "@ -> @" )
 
     -- TODO
-    evalExpr "∀a. a -> ∀a. a" -- (?) should this be (∀a. a -> a) or (∀a b. a -> b) ?
+    evalExpr "∀a. a -> ∀a. a" -- Ok ( "∀a b. a -> b", "@ -> @" )
     evalExpr "∀a b. a b"      -- (?) is this even allowed?
 
     -- Typed Expression (lazy evaluation to allow for recursive calls)
@@ -815,12 +815,12 @@ defineType ( typeName, typeInputs ) constructors env =
     evalExpr "x : a = y; x" --> Ok ( "y", "Num" )
 
     -- Type definitions
-    evalExpr "$Maybe a = Just a | Nothing; Just 42" -- Ok ( "Just 42", "Maybe Int" )
-    evalExpr "$Maybe a = Just a | Nothing; Nothing" -- Ok ( "Just 42", "Maybe Int" )
+    evalExpr "%Maybe a = Just a | Nothing; Just 42" -- Ok ( "Just 42", "Maybe Int" )
+    evalExpr "%Maybe a = Just a | Nothing; Nothing" -- Ok ( "Just 42", "Maybe Int" )
 
     -- Case application
-    evalExpr "$Bool = True | False; True 1 2" -- Ok ( "1", "Int" )
-    evalExpr "$Bool = True | False; False 1 2" -- Ok ( "2", "Int" )
+    evalExpr "%Bool = True | False; True 1 2" -- Ok ( "1", "Int" )
+    evalExpr "%Bool = True | False; False 1 2" -- Ok ( "2", "Int" )
 
 -}
 eval : Expr -> Env a -> Env ( Expr, Type )
@@ -911,6 +911,7 @@ eval expr env =
 
 isVarInExpr : String -> Expr -> Bool
 isVarInExpr name expr =
+    -- TODO: replace with freeTypesOf
     case expr of
         Any ->
             False
@@ -1007,17 +1008,56 @@ eval_ =
 -}
 evalType : Type -> Env a -> Env ( Type, Type )
 evalType typ env =
+    let
+        typeVars =
+            Set.toList (typeVarsOf typ env)
+    in
+    List.foldl
+        (\x -> define x (Var x))
+        env
+        typeVars
+        |> eval_ (forAll typeVars typ)
+
+
+evalType_ : Type -> Env a -> Env ( Type, Type )
+evalType_ =
+    -- Workaround for: https://github.com/elm/compiler/issues/2186
+    evalType
+
+
+typeVarsOf : Type -> Env a -> Set String
+typeVarsOf typ env =
     case typ of
+        Any ->
+            Set.empty
+
+        Int _ ->
+            Set.empty
+
+        Num _ ->
+            Set.empty
+
         Var x ->
-            case Dict.get x env.names of
-                Just _ ->
-                    eval typ env
+            if Dict.member x env.names then
+                Set.empty
 
-                Nothing ->
-                    eval (For x typ) env
+            else
+                Set.singleton x
 
-        _ ->
-            eval typ env
+        Lam x y ->
+            typeVarsOf y (define x (TE (Var x) Any) env)
+
+        For x y ->
+            typeVarsOf y (define x (TE (Var x) Any) env)
+
+        App e1 e2 ->
+            Set.union (typeVarsOf e1 env) (typeVarsOf e2 env)
+
+        Fnc t1 t2 ->
+            Set.union (typeVarsOf t1 env) (typeVarsOf t2 env)
+
+        TE e t ->
+            Set.union (typeVarsOf e env) (typeVarsOf t env)
 
 
 {-| Tries to unify two types or get a `TypeMismatch` error.
