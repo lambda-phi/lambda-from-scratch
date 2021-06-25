@@ -28,7 +28,9 @@ import Parser
 type Term
     = Type --               Type        Type of types (Kind)
     | IntT --               Int         Integer type
+    | NumT --               Num         Number type
     | Int Int --            42          Integer value
+    | Num Float --          3.14        Number value
     | Var String --         x           Variable
     | Fun Term Term --      T1 -> T2    Function type
     | Lam String Term --    λx. t       Lambda abstraction
@@ -39,8 +41,6 @@ type Term
 -}
 type Error
     = SyntaxError Parser.Error
-      -- | TypeMismatch Type Type -- got, expected
-    | VariableNotFound String
     | CannotApply Term Term
 
 
@@ -64,8 +64,14 @@ eval term =
         IntT ->
             Ok ( IntT, Type )
 
+        NumT ->
+            Ok ( NumT, Type )
+
         Int n ->
             Ok ( Int n, IntT )
+
+        Num n ->
+            Ok ( Num n, NumT )
 
         Var x ->
             Ok ( Var x, Var x )

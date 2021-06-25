@@ -4,14 +4,14 @@ module LambdaTests exposing (..)
 
     import Lambda exposing (Error(..), Term(..), eval)
 
-    -- Type
+    -- Types
     eval Type --> Ok ( Type, Type )
-
-    -- Integer type
     eval IntT --> Ok ( IntT, Type )
+    eval NumT --> Ok ( NumT, Type )
 
-    -- Integer value
-    eval (Int 1) --> Ok ( Int 1, IntT )
+    -- Values
+    eval (Int 42)   --> Ok ( Int 42, IntT )
+    eval (Num 3.14) --> Ok ( Num 3.14, NumT )
 
     -- Variable
     eval (Var "x") --> Ok ( Var "x", Var "x" )
