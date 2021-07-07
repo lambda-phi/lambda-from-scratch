@@ -71,30 +71,9 @@ letVar x ex e =
 eval : Expr -> Expr
 eval expr =
     case expr of
-        Int i ->
-            Int i
-
-        Num n ->
-            Num n
-
-        Var x ->
-            Var x
-
         -- λx. e  ⇒  λx. e
         Lam x e ->
             Lam x (eval e)
-
-        -- i e2  ⇒  i e2
-        App (Int i) e2 ->
-            App (Int i) e2
-
-        -- n e2  ⇒  n e2
-        App (Num n) e2 ->
-            App (Num n) e2
-
-        -- x e2  ⇒  x e2
-        App (Var x) e2 ->
-            App (Var x) e2
 
         -- x=ex; λy. e  ⇒  λy. (x=ex; e)
         App (Lam x (Lam y e)) ex ->
@@ -116,3 +95,6 @@ eval expr =
         -- (e1 e2) e3  ⇒  (e1 e2) e3
         App (App e1 e2) e3 ->
             eval (App (eval (App e1 e2)) e3)
+
+        _ ->
+            expr
