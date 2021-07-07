@@ -1,8 +1,6 @@
 {
   "root": "../src",
   "tests": [
-    "LambdaFromScratch.UntypedLambdaCalculus",
-    "Lambda",
-    "README.md"
+    "UntypedLambdaCalculus"
   ]
 }

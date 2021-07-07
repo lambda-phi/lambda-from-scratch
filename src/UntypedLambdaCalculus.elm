@@ -1,4 +1,4 @@
-module LambdaFromScratch.UntypedLambdaCalculus exposing (..)
+module UntypedLambdaCalculus exposing (..)
 
 
 type Expr
