@@ -71,28 +71,28 @@ letVar x ex e =
 eval : Expr -> Expr
 eval expr =
     case expr of
-        -- λx. e  ⇒  λx. e
+        -- λx. e  ⇒  λx. @e
         Lam x e ->
             Lam x (eval e)
 
-        -- x=ex; λy. e  ⇒  λy. (x=ex; e)
+        -- x=ex; λy. e  ⇒  @(λy. (x=ex; e))
         App (Lam x (Lam y e)) ex ->
             eval (Lam y (letVar x ex e))
 
-        -- x=ex; e1 e2  ⇒  (x=ex; e1) (x=ex; e2)
+        -- x=ex; e1 e2  ⇒  @(@(x=ex; e1) @(x=ex; e2))
         App (Lam x (App e1 e2)) ex ->
             eval (App (eval (letVar x ex e1)) (eval (letVar x ex e2)))
 
         App (Lam x e) ex ->
             if e == Var x then
-                -- x=ex; x  ⇒  ex
+                -- x=ex; x  ⇒  @ex
                 eval ex
 
             else
-                -- x=ex; e  ⇒  e
+                -- x=ex; e  ⇒  @e
                 eval e
 
-        -- (e1 e2) e3  ⇒  (e1 e2) e3
+        -- (e1 e2) e3  ⇒  @(@(e1 e2) e3)
         App (App e1 e2) e3 ->
             eval (App (eval (App e1 e2)) e3)
 
