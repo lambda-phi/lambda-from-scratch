@@ -2,56 +2,81 @@ module LambdaFromScratch.UntypedLambdaCalculus exposing (..)
 
 
 type Expr
-    = Var String --         x       Variable
+    = Int Int --            42      Integer value
+    | Num Float --          3.14    Number value
+    | Var String --         x       Variable
     | Lam String Expr --    λx. e   Lambda abstraction
     | App Expr Expr --      e1 e2   Application
 
 
-letV : String -> Expr -> Expr -> Expr
-letV x ex e =
+letVar : String -> Expr -> Expr -> Expr
+letVar x ex e =
     App (Lam x e) ex
 
 
 {-|
 
-    -- x  ⇒  x
+    -- ✅ 1  ⇒  1
+    eval (Int 1) --> Int 1
+
+    -- ✅ 3.14  ⇒  3.14
+    eval (Num 3.14) --> Num 3.14
+
+    -- ✅ x  ⇒  x
     eval (Var "x") --> Var "x"
 
-    -- λx. e  ⇒  λx. e
-    eval (Lam "x" (Var "e")) --> Lam "x" (Var "e")
+    -- ✅ λx. 1  ⇒  λx. 1
+    eval (Lam "x" (Int 1)) --> Lam "x" (Int 1)
 
-    -- e1 e2  ⇒  e1 e2
-    eval (App (Var "e1") (Var "e2")) --> App (Var "e1") (Var "e2")
+    -- ✅ λx. x  ⇒  λx. x
+    eval (Lam "x" (Var "x")) --> Lam "x" (Var "x")
 
-    -- x=ex; x  ⇒  ex
-    eval (letV "x" (Var "ex") (Var "x")) --> Var "ex"
+    -- ✅ λx. y  ⇒  λx. y
+    eval (Lam "x" (Var "y")) --> Lam "x" (Var "y")
 
-    -- x=ex; e  ⇒  e
-    eval (letV "x" (Var "ex") (Var "e")) --> Var "e"
+    -- ✅ 1 2  ⇒  1 2
+    eval (App (Int 1) (Int 2)) --> App (Int 1) (Int 2)
 
-    -- x=ex; λy. x  ⇒  λy. ex
-    eval (letV "x" (Var "ex") (Lam "y" (Var "x"))) --> Lam "y" (Var "ex")
+    -- ✅ x=1; 2  ⇒  2
+    eval (letVar "x" (Int 1) (Int 2)) --> Int 2
 
-    -- x=ex; e1 x  ⇒  e1 ex
-    eval (letV "x" (Var "ex") (App (Var "e1") (Var "x"))) --> App (Var "e1") (Var "ex")
+    -- ✅ x=1; x  ⇒  1
+    eval (letVar "x" (Int 1) (Var "x")) --> Int 1
 
-    -- x=ex; x e2  ⇒  ex e2
-    eval (letV "x" (Var "ex") (App (Var "x") (Var "e2"))) --> App (Var "ex") (Var "e2")
+    -- ✅ x=1; y  ⇒  y
+    eval (letVar "x" (Int 1) (Var "y")) --> Var "y"
 
-    -- x=ex; y=ey; x  ⇒  ex
-    eval (letV "x" (Var "ex") (letV "y" (Var "ey") (Var "x"))) -- Var "ex"
+    -- ✅ x=1; λy. x  ⇒  λy. 1
+    eval (letVar "x" (Int 1) (Lam "y" (Var "x"))) --> Lam "y" (Int 1)
 
-    -- x=ex; y=ey; y  ⇒  ey
-    eval (letV "x" (Var "ex") (letV "y" (Var "ey") (Var "y"))) -- Var "ey"
+    -- ✅ x=1; x 2  ⇒  1 2
+    eval (letVar "x" (Int 1) (App (Var "x") (Int 2))) --> App (Int 1) (Int 2)
 
-    -- x=ex; y=x; y  ⇒  ex
-    eval (letV "x" (Var "ex") (letV "y" (Var "x") (Var "y"))) -- Var "ex"
+    -- ✅ x=1; y=2; x  ⇒  1
+    eval (letVar "x" (Int 1) (letVar "y" (Int 2) (Var "x"))) --> Int 1
+
+    -- ✅ x=1; y=2; y  ⇒  2
+    eval (letVar "x" (Int 1) (letVar "y" (Int 2) (Var "y"))) --> Int 2
+
+    -- ✅ x=1; y=x; y  ⇒  1
+    eval (letVar "x" (Int 1) (letVar "y" (Var "x") (Var "y"))) --> Int 1
+
+    -- ✅ ((λx. x) (λy. 1)) 2  ⇒  1
+    eval (App (App (Lam "x" (Var "x")) (Lam "y" (Int 1))) (Int 2)) --> Int 1
+
+    -- ✅ (λx. 1) (y=2; y)  ⇒  1
+    eval (App (Lam "x" (Int 1)) (letVar "y" (Int 2) (Var "y"))) --> Int 1
 
 -}
 eval : Expr -> Expr
 eval expr =
     case expr of
-        -- x  ⇒  x
+        Int i ->
+            Int i
+
+        Num n ->
+            Num n
+
         Var x ->
             Var x
 
@@ -59,17 +84,25 @@ eval expr =
         Lam x e ->
             Lam x (eval e)
 
+        -- i e2  ⇒  i e2
+        App (Int i) e2 ->
+            App (Int i) e2
+
+        -- n e2  ⇒  n e2
+        App (Num n) e2 ->
+            App (Num n) e2
+
+        -- x e2  ⇒  x e2
+        App (Var x) e2 ->
+            App (Var x) e2
+
         -- x=ex; λy. e  ⇒  λy. (x=ex; e)
         App (Lam x (Lam y e)) ex ->
-            eval (Lam y (letV x ex e))
-
-        -- x=ex; y=ey; e  ⇒  y=(x=ex; ey); (x=ex; e)
-        App (Lam x (App (Lam y e) ey)) ex ->
-            eval (letV y (letV x ex ey) (letV x ex e))
+            eval (Lam y (letVar x ex e))
 
         -- x=ex; e1 e2  ⇒  (x=ex; e1) (x=ex; e2)
         App (Lam x (App e1 e2)) ex ->
-            eval (App (letV x ex e1) (letV x ex e2))
+            eval (App (eval (letVar x ex e1)) (eval (letVar x ex e2)))
 
         App (Lam x e) ex ->
             if e == Var x then
@@ -80,6 +113,6 @@ eval expr =
                 -- x=ex; e  ⇒  e
                 eval e
 
-        -- e1 e2  ⇒  e1 e2
-        App e1 e2 ->
-            App (eval e1) (eval e2)
+        -- (e1 e2) e3  ⇒  (e1 e2) e3
+        App (App e1 e2) e3 ->
+            eval (App (eval (App e1 e2)) e3)
