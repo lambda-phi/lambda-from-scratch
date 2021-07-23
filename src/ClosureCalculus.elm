@@ -8,7 +8,7 @@ type alias Env =
 type Expr
     = Num Float --              3.14        Number value
     | Var String --             x           Variable
-    | Lam Env String Expr --    λ[Γ]x. e    Closure abstraction
+    | Lam Env String Expr --    λ[Γ]x. e    Lambda closure
     | App Expr Expr --          e1 e2       Application
 
 
@@ -135,7 +135,7 @@ letVars vars e =
     -- ✅ (λ[a=1]x. λ[]y. a) 2  ⇒  λ[]y. 1
     eval (App (Lam [ ( "a", Num 1 ) ] "x" (Lam [] "y" (Var "a"))) (Num 2)) --> Ok (Lam [] "y" (Num 1))
 
-    -- ✅ (λ[a=1]x. (λ[]y. y) a) 2  ⇒  1
+    -- ✅ (λ[a=1]x. y=a; y) 2  ⇒  1
     eval (App (Lam [ ( "a", Num 1 ) ] "x" (App (Lam [] "y" (Var "y")) (Var "a"))) (Num 2)) --> Ok (Num 1)
 
     -- ✅ ((λ[]x. x) (λ[]y. y)) 1  ⇒  1
@@ -163,6 +163,19 @@ eval expr =
             else
                 Err (UndefinedVar y expr)
 
+        Lam [] x (Lam env2 y e) ->
+            -- λ[]x. λ[Γ]y. e  ⇒  λ[]x. λ[Γ,x=x]y. e
+            Result.map (Lam [] x)
+                (eval (Lam (( x, Var x ) :: env2) y e))
+
+        Lam [] x (App e1 e2) ->
+            -- λ[]x. e1 e2  ⇒  λ[]x. (x=x; e1) (x=x; e2)
+            Result.map2 App
+                (eval (letVar x (Var x) e1))
+                (eval (letVar x (Var x) e2))
+                |> Result.andThen eval
+                |> Result.map (Lam [] x)
+
         Lam (( a, ea ) :: env) x (Var y) ->
             if a == y then
                 if ea == Var a then
@@ -177,29 +190,10 @@ eval expr =
                 -- λ[Γ,a=ea]x. y  ⇒  λ[Γ]x. y
                 eval (Lam env x (Var y))
 
-        Lam [] x (Lam env2 y e) ->
-            -- λ[]x. λ[Γ]y. e  ⇒  λ[]x. λ[Γ,x=x]y. e
-            Result.map (Lam [] x)
-                (eval (Lam (( x, Var x ) :: env2) y e))
-
-        Lam (( a, ea ) :: env1) x (Lam env2 y e) ->
-            -- λ[Γ1,a=ea]x. λ[Γ2]y. e  ⇒  λ[Γ1]x. λ[Γ2,a=ea]y. e
-            eval (Lam env1 x (Lam (( a, ea ) :: env2) y e))
-
-        Lam [] x (App e1 e2) ->
-            -- λ[]x. e1 e2  ⇒  λ[]x. (x=x; e1) (x=x; e2)
-            Result.map2 App
-                (eval (letVar x (Var x) e1))
-                (eval (letVar x (Var x) e2))
-                |> Result.andThen eval
-                |> Result.map (Lam [] x)
-
-        Lam (( a, ea ) :: env) x (App e1 e2) ->
-            -- λ[Γ,a=ea]x. e1 e2  ⇒  λ[Γ]x. (a=ea; e1) (a=ea; e2)
-            Result.map2 App
-                (eval (letVar a ea e1))
-                (eval (letVar a ea e2))
-                |> Result.map (Lam env x)
+        Lam (( a, ea ) :: env) x e ->
+            -- λ[Γ,a=ea]x. e  ⇒  λ[Γ]x. a=ea; e
+            Result.map (Lam env x)
+                (eval (letVar a ea e))
                 |> Result.andThen eval
 
         App (Num k) _ ->
