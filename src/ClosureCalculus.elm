@@ -1,7 +1,5 @@
 module ClosureCalculus exposing (..)
 
-import TypedLambdaCalculus exposing (Error(..))
-
 
 type alias Env =
     List ( String, Expr )
