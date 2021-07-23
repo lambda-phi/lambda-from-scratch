@@ -69,6 +69,9 @@ letVars vars e =
     -- ✅ λ[]x. (y=1; y)  ⇒  λ[]x. 1
     eval (Lam [] "x" (App (Lam [] "y" (Var "y")) (Num 1))) --> Ok (Lam [] "x" (Num 1))
 
+    -- ✅ λ[]x. (y=x; y)  ⇒  λ[x=x]x. x
+    eval (Lam [] "x" (App (Lam [] "y" (Var "y")) (Var "x"))) --> Ok (Lam [ ( "x", Var "x" ) ] "x" (Var "x"))
+
     -- ✅ λ[a=1]x. 2  ⇒  λ[]y. 2
     eval (Lam [ ( "a", Num 1 ) ] "x" (Num 2)) --> Ok (Lam [] "x" (Num 2))
 
@@ -108,6 +111,9 @@ letVars vars e =
     -- ❌ x=1; y  ⇒  Undefined variable
     eval (App (Lam [] "x" (Var "y")) (Num 1)) --> Err (UndefinedVar "y" (App (Lam [] "x" (Var "y")) (Num 1)))
 
+    -- ✅ x=x; x  ⇒  x
+    eval (App (Lam [] "x" (Var "x")) (Var "x")) --> Ok (Var "x")
+
     -- ✅ x=1; λ[]y. x  ⇒  λ[]y. 1
     eval (App (Lam [] "x" (Lam [] "y" (Var "x"))) (Num 1)) --> Ok (Lam [] "y" (Num 1))
 
@@ -137,6 +143,9 @@ letVars vars e =
 
     -- ✅ (λ[a=1]x. y=a; y) 2  ⇒  1
     eval (App (Lam [ ( "a", Num 1 ) ] "x" (App (Lam [] "y" (Var "y")) (Var "a"))) (Num 2)) --> Ok (Num 1)
+
+    -- ✅ (λ[a=1]x. y=x; y) 2  ⇒  2
+    eval (App (Lam [ ( "a", Num 1 ) ] "x" (App (Lam [] "y" (Var "y")) (Var "x"))) (Num 2)) --> Ok (Num 2)
 
     -- ✅ ((λ[]x. x) (λ[]y. y)) 1  ⇒  1
     eval (App (App (Lam [] "x" (Var "x")) (Lam [] "y" (Var "y"))) (Num 1)) --> Ok (Num 1)
@@ -208,8 +217,13 @@ eval expr =
 
         App (Lam [] x (Var y)) ex ->
             if x == y then
-                -- x=ex; x  ⇒  ex
-                eval ex
+                if ex == Var x then
+                    -- x=x; x  ⇒  x
+                    Ok (Var x)
+
+                else
+                    -- x=ex; x  ⇒  ex
+                    eval ex
 
             else
                 Err (UndefinedVar y expr)
