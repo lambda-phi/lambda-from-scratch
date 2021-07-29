@@ -112,7 +112,8 @@ letVar name value expr =
     eval (letVar "f" (Lam "x" (Num 1)) (App (Var "f") (Num 2))) newEnv --> Ok (Num 1)
 
     -- ✅ Γ ⊢ f=λx. f x; f  ⇒  λx. f x
-    -- TODO: test a recursive function
+    -- TODO: have a way to recognize `f` is a recursive function and get its definition
+    eval (letVar "f" (Lam "x" (App (Var "f") (Var "x"))) (Var "f")) newEnv --> Ok (Lam "x" (App (Var "f") (Var "x")))
 
 -}
 eval : Expr -> Env -> Result Error Expr
@@ -124,14 +125,15 @@ eval expr env =
 
         Var x ->
             case Dict.get x env of
-                Just e ->
-                    if e == Var x then
+                Just ex ->
+                    if ex == Var x then
                         -- x=x ∈ Γ ⊢ x  ⇒  x
                         Ok (Var x)
 
                     else
-                        -- x=ex ∈ Γ ⊢ x  ⇒  x=ex ∈ Γ ⊢ ex
-                        eval e env
+                        -- x=ex ∈ Γ ⊢ x  ⇒  x=x ∈ Γ ⊢ ex
+                        -- TODO: redefine x with a recursive definition, maybe a Fix combinator?
+                        eval ex (define x (Var x) env)
 
                 Nothing ->
                     -- Γ ⊢ x  ⇒  Undefined variable
@@ -141,14 +143,30 @@ eval expr env =
             -- Γ ⊢ K e  ⇒  Not a function
             Err (NotAFunction (Num k))
 
+        App (Var x) e2 ->
+            case Dict.get x env of
+                Just e1 ->
+                    if e1 == Var x then
+                        -- x=x ∈ Γ ⊢ x e2  ⇒  x (x=x ∈ Γ ⊢ e2)
+                        Result.map (App (Var x))
+                            (eval e2 env)
+
+                    else
+                        -- x=e1 ∈ Γ ⊢ x e2  ⇒  x=e1 ∈ Γ ⊢ e1 e2
+                        eval (App e1 e2) env
+
+                Nothing ->
+                    -- Γ ⊢ x e2  ⇒  Undefined variable
+                    Err (UndefinedVar x)
+
         App (Lam x e) ex ->
             -- Γ ⊢ (λx. e) ex  ⇒  x=ex ∈ Γ ⊢ e
             eval e (define x ex env)
 
-        App e1 e2 ->
-            -- Γ ⊢ e1 e2  ⇒  Γ ⊢ (Γ ⊢ e1) e2
-            Result.andThen (\v1 -> eval (App v1 e2) env)
-                (eval e1 env)
+        App (App a b) e2 ->
+            -- Γ ⊢ (a b) e2  ⇒  Γ ⊢ (Γ ⊢ a b) e2
+            Result.andThen (\e1 -> eval (App e1 e2) env)
+                (eval (App a b) env)
 
         Lam x e ->
             -- Γ ⊢ λx. e  ⇒  λx. (x=x ∈ Γ ⊢ e)
