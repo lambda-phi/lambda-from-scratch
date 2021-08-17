@@ -1,4 +1,4 @@
-module MinimalLambdaCalculus exposing (..)
+module L0_Minimal exposing (..)
 
 
 type Expr

@@ -1,7 +1,6 @@
 {
   "root": "../src",
   "tests": [
-    "MinimalLambdaCalculus",
-    "ClosureCalculus"
+    "L1_Untyped"
   ]
 }
