@@ -12,7 +12,7 @@ type Expr
     | Var String --             x           Variable
     | App Expr Expr --          e1 e2       Application
     | Lam String Expr --        λx. e       Lambda abstraction
-    | Env Env --                Γ,x=ex      Environment
+    | Env Env --                x=ex :: Γ   Environment
 
 
 type Error
@@ -79,16 +79,16 @@ letVar x ex e =
     eval (Var "x") --> Err (UndefinedVar "x")
 
     -- ✅ [x=1] x  ⇒  1
-    eval (App (Env (insert "x" (Num 1) empty)) (Var "x")) --> Ok (Num 1)
+    eval (App (Env (fromList [ ( "x", Num 1 ) ])) (Var "x")) --> Ok (Num 1)
 
     -- ✅ [x=y, y=1] x  ⇒  1
-    eval (App (Env (empty |> insert "x" (Var "y") |> insert "y" (Num 1))) (Var "x")) --> Ok (Num 1)
+    eval (App (Env (fromList [ ( "x", Var "y" ), ( "y", Num 1 ) ])) (Var "x")) --> Ok (Num 1)
 
     -- ❌ [x=1] y  ⇒  Undefined variable
-    eval (App (Env (insert "x" (Num 1) empty)) (Var "y")) --> Err (UndefinedVar "y")
+    eval (App (Env (fromList [ ( "x", Num 1 ) ])) (Var "y")) --> Err (UndefinedVar "y")
 
     -- ✅ [x=x] x  ⇒  [x=x] x
-    eval (App (Env (insert "x" (Var "x") empty)) (Var "x")) --> Ok (App (Env (insert "x" (Var "x") empty)) (Var "x"))
+    eval (App (Env (fromList [ ( "x", Var "x" ) ])) (Var "x")) --> Ok (App (Env (fromList [ ( "x", Var "x" ) ])) (Var "x"))
 
     -- ❌ 1 2  ⇒  Not a function
     eval (App (Num 1) (Num 2)) --> Err (NotAFunction (Num 1))
@@ -103,19 +103,19 @@ letVar x ex e =
     eval (App (Lam "x" (Var "y")) (Num 1)) --> Err (UndefinedVar "y")
 
     -- ✅ [y=1] ((λx. y) 2)  ⇒  1
-    eval (App (Env (insert "y" (Num 1) empty)) (App (Lam "x" (Var "y")) (Num 2))) --> Ok (Num 1)
+    eval (App (Env (fromList [ ( "y", Num 1 ) ])) (App (Lam "x" (Var "y")) (Num 2))) --> Ok (Num 1)
 
     -- ✅ [x=y] [y=1]  ⇒  [x=y, y=1]
-    eval (App (Env (insert "x" (Var "y") empty)) (Env (insert "y" (Num 1) empty))) --> Ok (Env (fromList [ ( "x", Var "y" ), ( "y", Num 1 ) ]))
+    eval (App (Env (fromList [ ( "x", Var "y" ) ])) (Env (fromList [ ( "y", Num 1 ) ]))) --> Ok (Env (fromList [ ( "x", Var "y" ), ( "y", Num 1 ) ]))
 
     -- ✅ [x=1] [y=x]  ⇒  [x=1, y=x]
-    eval (App (Env (insert "x" (Num 1) empty)) (Env (insert "y" (Var "x") empty))) --> Ok (Env (fromList [ ( "x", Num 1 ), ( "y", Var "x" ) ]))
+    eval (App (Env (fromList [ ( "x", Num 1 ) ])) (Env (fromList [ ( "y", Var "x" ) ]))) --> Ok (Env (fromList [ ( "x", Num 1 ), ( "y", Var "x" ) ]))
 
     -- ✅ [x=y] ([y=1] x)  ⇒  1
-    eval (App (Env (insert "x" (Var "y") empty)) (App (Env (insert "y" (Num 1) empty)) (Var "x"))) --> Ok (Num 1)
+    eval (App (Env (fromList [ ( "x", Var "y" ) ])) (App (Env (fromList [ ( "y", Num 1 ) ])) (Var "x"))) --> Ok (Num 1)
 
     -- ✅ [x=1] ([y=x] y)  ⇒  1
-    eval (App (Env (insert "x" (Num 1) empty)) (App (Env (insert "y" (Var "x") empty)) (Var "y"))) --> Ok (Num 1)
+    eval (App (Env (fromList [ ( "x", Num 1 ) ])) (App (Env (fromList [ ( "y", Var "x" ) ])) (Var "y"))) --> Ok (Num 1)
 
     -- ✅ λx. 1  ⇒  λx. 1
     eval (Lam "x" (Num 1)) --> Ok (Lam "x" (Num 1))
@@ -127,10 +127,10 @@ letVar x ex e =
     eval (Lam "x" (Var "y")) --> Err (UndefinedVar "y")
 
     -- ✅ [y=1] λx. y  ⇒  λx. 1
-    eval (App (Env (insert "y" (Num 1) empty)) (Lam "x" (Var "y"))) --> Ok (Lam "x" (Num 1))
+    eval (App (Env (fromList [ ( "y", Num 1 ) ])) (Lam "x" (Var "y"))) --> Ok (Lam "x" (Num 1))
 
     -- ✅ [x=1] λx. x  ⇒  λx. x
-    eval (App (Env (insert "x" (Var "x") empty)) (Lam "x" (Var "x"))) --> Ok (Lam "x" (Var "x"))
+    eval (App (Env (fromList [ ( "x", Var "x" ) ])) (Lam "x" (Var "x"))) --> Ok (Lam "x" (Var "x"))
 
     -- ✅ λx. λy. x  ⇒  λx. λy. x
     eval (Lam "x" (Lam "y" (Var "x"))) --> Ok (Lam "x" (Lam "y" (Var "x")))
@@ -145,10 +145,10 @@ letVar x ex e =
     eval (App (App (Lam "x" (Var "x")) (Lam "y" (Num 1))) (Num 2)) --> Ok (Num 1)
 
     -- ✅ ([f=λx. 1] f) 2  ⇒  1
-    eval (App (App (Env (insert "f" (Lam "x" (Num 1)) empty)) (Var "f")) (Num 2)) --> Ok (Num 1)
+    eval (App (App (Env (fromList [ ( "f", Lam "x" (Num 1) ) ])) (Var "f")) (Num 2)) --> Ok (Num 1)
 
     -- ✅ [f=λx. 1] (f 2)  ⇒  1
-    eval (App (Env (insert "f" (Lam "x" (Num 1)) empty)) (App (Var "f") (Num 2))) --> Ok (Num 1)
+    eval (App (Env (fromList [ ( "f", Lam "x" (Num 1) ) ])) (App (Var "f") (Num 2))) --> Ok (Num 1)
 
     -- ✅ []  ⇒  []
     eval (Env empty) --> Ok (Env empty)
@@ -165,42 +165,7 @@ letVar x ex e =
     -- ✅ [f=λx. 1] f  ⇒  λx. 1
     eval (App (Env (fromList [ ( "f", Lam "x" (Num 1) ) ])) (Var "f")) --> Ok (Lam "x" (Num 1))
 
-
-
     -- TODO: RECURSIVE FUNCTIONS
-
-    -- ✅ [f=λx. f 1] f  ⇒  [f=λx. f 1] f
-    eval (App (Env (fromList [ ( "f", Lam "x" (App (Var "f") (Num 1)) ) ])) (Var "f")) --> Ok (Lam "x" (Num 1))
-
-
-
-
-
-
-    -- -- ✅ Γ ⊢ f=λx. f 1; f  ⇒  f=λx. f 1; f
-    -- eval (letVar "f" (Lam "x" (App (Var "f") (Num 1))) (Var "f")) empty -- Ok (letVar "f" (Lam "x" (App (Var "f") (Num 1))) (Var "f"))
-
-    -- ---=== Recursive functions ===--- (TODO: merge these above)
-    -- --
-    -- -- ✅ Γ ⊢ f=λx. f 1; f  ⇒  f=λx. f 1; f
-    -- eval (letVar "f" (Lam "x" (App (Var "f") (Num 1))) (Var "f")) empty -- Ok (letVar "f" (Lam "x" (App (Var "f") (Num 1))) (Var "f"))
-
-    -- -- ✅ Γ, g=λy. 1 ⊢ f=λx. g 2; f  ⇒  λx. 1
-    -- eval (letVar "f" (Lam "x" (App (Var "g") (Num 2))) (Var "f")) (insert "g" (Lam "y" (Num 1)) empty) -- Ok (Lam "x" (Num 1))
-
-    -- -- ✅ Γ ⊢ f=λx. (f=λx. f 1; f) 2; f  ⇒  λx. 1
-    -- eval (letVar "f" (Lam "x" (App (Var "g") (Num 2))) (Var "f")) (insert "g" (Lam "y" (Num 1)) empty) -- Ok (Lam "x" (Num 1))
-
-    -- TODO: insert a recursive function with more than one argument
-    -- TODO: call a recursive function with one argument
-    -- TODO: call a recursive function with more than one argument
-
-    -- -- ✅ Γ ⊢ f=λx. λy. f 1 2; f  ⇒  f=λx. λy. f 1 2; f
-    -- eval (letVar "f" (Lam "x" (Lam "y" (App (App (Var "f") (Num 1)) (Num 2)))) (Var "f")) empty -- Ok (letVar "f" (Lam "x" (Lam "y" (App (App (Var "f") (Num 1)) (Num 2)))) (Var "f"))
-
-    -- @f = (λx. x x) (λx. f (x x))
-    -- factorial n = if n == 0 then 1 else n * factorial (n - 1)
-    -- factorial = \n. (n == 0) 1 (n * factorial (n - 1))
 
 -}
 eval : Expr -> Result Error Expr
@@ -242,7 +207,7 @@ eval expr =
 
         App (Lam x e) ex ->
             -- (λx. e) ex  ⇒  @( [x=ex] e )
-            eval (App (Env (insert x ex empty)) e)
+            eval (App (Env (fromList [ ( x, ex ) ])) e)
 
         App (Env env) (App (Lam x e) ex) ->
             -- Γ ((λx. e) ex)  ⇒  @( (x=ex :: Γ) e )
@@ -257,7 +222,7 @@ eval expr =
             eval (App (Env (merge env1 env2)) e)
 
         Lam x e ->
-            case eval (App (Env (insert x (Var x) empty)) e) of
+            case eval (App (Env (fromList [ ( x, Var x ) ])) e) of
                 Ok (App (Env env) xe) ->
                     if names env == [ x ] then
                         -- λx. @( [x=ex] e )  ⇒  λx. e
@@ -279,18 +244,27 @@ eval expr =
             eval (Lam x (App (Env vars) e))
 
         App (App a b) e2 ->
-            -- (a b) e2  ⇒  @( @(a b) @e2 )
-            Result.map2 App
+            -- (a b) e2  ⇒  @( @(a b) e2 )
+            Result.map (\e1 -> App e1 e2)
                 (eval (App a b))
-                (eval e2)
                 |> Result.andThen eval
 
         App (Env vars) (App e1 e2) ->
             -- Γ (e1 e2)  ⇒  @( @(Γ e1) @(Γ e2) )
-            Result.map2 App
-                (eval (App (Env vars) e1))
-                (eval (App (Env vars) e2))
-                |> Result.andThen eval
+            -- Result.map2 App
+            --     (eval (App (Env vars) e1))
+            --     (eval (App (Env vars) e2))
+            --     |> Result.andThen eval
+            case eval (App (Env vars) e1) of
+                Ok (App (Env vs) e) ->
+                    Result.map (App e) (eval (App (Env vars) e2))
+                        |> Result.map (App (Env vs))
+
+                Ok e ->
+                    eval (App e (App (Env vars) e2))
+
+                Err err ->
+                    Err err
 
         Env vars ->
             -- TODO: define a rule, maybe simplify
