@@ -13,11 +13,15 @@ type Expr
     | App Expr Expr --          e1 e2       Application
     | Lam String Expr --        λx. e       Lambda abstraction
     | Fix String Expr --        @f. e       Fixed point
+      -- Built-in operators
+    | Add --                    +           Addition
+    | Sub --                    -           Subtraction
+    | Mul --                    *           Multiplication
+    | Eq --                     ==          Equals
 
 
 type Error
     = UndefinedVar String
-    | NotAFunction Expr
 
 
 empty : Env
@@ -96,8 +100,8 @@ letVar x ex e =
     eval (Var "x") (fromList [ ( "x", Fix "y" (Var "y") ) ]) --> Ok (Fix "y" (Var "y"))
 
     --== Application ==--
-    -- ❌ 1 2  ⇒  Not a function
-    eval (App (Num 1) (Num 2)) empty --> Err (NotAFunction (Num 1))
+    -- ✅ 1 2  ⇒  1 2
+    eval (App (Num 1) (Num 2)) empty --> Ok (App (Num 1) (Num 2))
 
     -- ❌ f 1  ⇒  Undefined variable
     eval (App (Var "f") (Num 1)) empty --> Err (UndefinedVar "f")
@@ -174,16 +178,28 @@ letVar x ex e =
     eval (App (Lam "f" (Var "f")) (Lam "x" (App (Var "f") (Var "x")))) empty --> Ok (Fix "f" (Lam "x" (App (Var "f") (Var "x"))))
 
     --== Built-in functions ==--
-    -- ✅ (+) 1  ⇒  λb. $add 1 b
-    eval (App (Var "+") (Num 1)) empty --> Ok (Lam "b" (Add (Num 1) (Var "b")))
+    -- ✅ Addition
+    eval (App (App Add (Num 3)) (Num 2)) empty --> Ok (Num 5)
+    eval (App (App Add (Var "x")) (Num 2)) (fromList [("x", Var "x")]) --> Ok (App (App Add (Var "x")) (Num 2))
 
-    -- ✅ (+) 1 2  ⇒  3
-    eval (App (App (Var "+") (Num 1)) (Num 2)) empty --> Ok (Num 3)
+    -- ✅ Subtraction
+    eval (App (App Sub (Num 3)) (Num 2)) empty --> Ok (Num 1)
+    eval (App (App Sub (Var "x")) (Num 2)) (fromList [("x", Var "x")]) --> Ok (App (App Sub (Var "x")) (Num 2))
 
+    -- ✅ Multiplication
+    eval (App (App Mul (Num 3)) (Num 2)) empty --> Ok (Num 6)
+    eval (App (App Mul (Var "x")) (Num 2)) (fromList [("x", Var "x")]) --> Ok (App (App Mul (Var "x")) (Num 2))
 
+    -- ✅ Equals
+    eval (App (App Eq (Num 3)) (Num 2)) empty --> Ok (Lam "t" (Lam "f" (Var "f")))
+    eval (App (App Eq (Num 3)) (Num 3)) empty --> Ok (Lam "t" (Lam "f" (Var "t")))
+    eval (App (App Eq (Num 3)) (Num 4)) empty --> Ok (Lam "t" (Lam "f" (Var "f")))
+    eval (App (App Eq (Var "x")) (Num 2)) (fromList [("x", Var "x")]) --> Ok (App (App Eq (Var "x")) (Num 2))
 
     --== Recursive functions ==--
-    -- f = \n. (n == 0) 1 (n * f (n - 1))
+    -- ✅ Factorial -- f = \n. (n == 0) 1 (n * f (n - 1))
+    eval (Var "f") (fromList [("f", Lam "n" (App (App (App (App Eq (Var "n")) (Num 0)) (Num 1)) (App (App Mul (Var "n")) (App (Var "f") (App (App Sub (Var "n")) (Num 1))))))])
+    --> Ok (Fix "f" (Lam "n" (App (App (App (App Eq (Var "n")) (Num 0)) (Num 1)) (App (App Mul (Var "n")) (App (Var "f") (App (App Sub (Var "n")) (Num 1)))))))
 
     --== Mutually recursive functions ==--
     -- https://en.wikipedia.org/wiki/Hofstadter_sequence#Hofstadter_Female_and_Male_sequences
@@ -213,42 +229,77 @@ eval expr env =
                     -- x ~ Γ  ⇒  Undefined variable
                     Err (UndefinedVar x)
 
-        App (Num k) _ ->
-            -- K e2 ~ Γ  ⇒  Not a function
-            Err (NotAFunction (Num k))
+        App e1 e2 ->
+            case eval e1 env of
+                Ok (Var x) ->
+                    case get x env of
+                        Just e ->
+                            if e == Var x then
+                                Result.map (App (Var x)) (eval e2 env)
 
-        App (Var x) e2 ->
-            case get x env of
-                Just e1 ->
-                    if e1 == Var x then
-                        -- TODO: rule
-                        Result.map (App (Var x))
-                            (eval e2 env)
+                            else
+                                eval (App e e2) env
 
-                    else
-                        -- TODO: rule
-                        eval (App e1 e2) env
+                        Nothing ->
+                            Err (UndefinedVar x)
 
-                Nothing ->
-                    Err (UndefinedVar x)
+                Ok (Lam x e) ->
+                    eval e (insert x e2 env)
 
-        App (App a b) e2 ->
-            -- (a b) e2 ~ Γ  ⇒  (a b ~ Γ) e2 ~ {}
-            Result.andThen (\e1 -> eval (App e1 e2) env)
-                (eval (App a b) env)
+                Ok (Fix x e) ->
+                    Result.map (App e) (eval e2 env)
+                        |> Result.map (Fix x)
 
-        App (Lam x e) ex ->
-            -- (λx. e) ex ~ Γ  ⇒  e ~ (x=ex :: Γ)
-            eval e (insert x ex env)
+                Ok (App Add (Num a)) ->
+                    case eval e2 env of
+                        Ok (Num b) ->
+                            Ok (Num (a + b))
 
-        App (Fix x e1) e2 ->
-            case eval (Fix x e1) env of
-                Ok (Fix y e) ->
-                    -- TODO: rule
-                    Ok (Fix y (App e e2))
+                        Ok e ->
+                            Ok (App (App Add (Num a)) e)
+
+                        Err err ->
+                            Err err
+
+                Ok (App Sub (Num a)) ->
+                    case eval e2 env of
+                        Ok (Num b) ->
+                            Ok (Num (a - b))
+
+                        Ok e ->
+                            Ok (App (App Sub (Num a)) e)
+
+                        Err err ->
+                            Err err
+
+                Ok (App Mul (Num a)) ->
+                    case eval e2 env of
+                        Ok (Num b) ->
+                            Ok (Num (a * b))
+
+                        Ok e ->
+                            Ok (App (App Mul (Num a)) e)
+
+                        Err err ->
+                            Err err
+
+                Ok (App Eq (Num a)) ->
+                    case eval e2 env of
+                        Ok (Num b) ->
+                            if a == b then
+                                Ok (Lam "t" (Lam "f" (Var "t")))
+
+                            else
+                                Ok (Lam "t" (Lam "f" (Var "f")))
+
+                        Ok e ->
+                            Ok (App (App Eq (Num a)) e)
+
+                        Err err ->
+                            Err err
 
                 Ok e ->
-                    eval (App e e2) env
+                    Result.map (App e) (eval e2 env)
 
                 Err err ->
                     Err err
@@ -282,3 +333,6 @@ eval expr env =
         Fix x e ->
             -- TODO: rule
             eval e (insert x (Fix x (Var x)) env)
+
+        _ ->
+            Ok expr
